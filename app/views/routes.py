@@ -3,14 +3,14 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.controllers.gemini_controller import run_gemini_batch
-from app.controllers.mimir_controller import fetch_all_items, push_metadata_to_mimir
+from app.controllers.mimir_controller import extract_folder_id, fetch_all_items, push_metadata_to_mimir
 from app.database import get_db
 from app.models.asset import Asset
 
@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-# In-memory task lock (single-instance tool)
+# In-memory task lock + active folder_id (single-instance tool)
 _running: dict[str, bool] = {"fetch": False, "batch": False}
+_active_folder_id: str = ""
 
 
 # ── Views ──────────────────────────────────────────────────────────────────────
@@ -108,22 +109,25 @@ async def reset_asset(item_id: str, db: Session = Depends(get_db)):
 # ── API: Fetch from Mimir (SSE) ────────────────────────────────────────────────
 
 @router.post("/api/fetch")
-async def start_fetch():
+async def start_fetch(folder_url: str = Body(..., embed=True)):
+    global _active_folder_id
     if _running["fetch"]:
         raise HTTPException(status_code=409, detail="Fetch already running")
     if not settings.MIMIR_TOKEN:
         raise HTTPException(status_code=400, detail="MIMIR_TOKEN not set")
-    if not settings.FOLDER_ID:
-        raise HTTPException(status_code=400, detail="FOLDER_ID not set")
+    try:
+        _active_folder_id = extract_folder_id(folder_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     _running["fetch"] = True
-    return {"ok": True, "message": "Fetch started — connect to /api/fetch/stream"}
+    return {"ok": True, "folder_id": _active_folder_id}
 
 
 @router.get("/api/fetch/stream")
 async def fetch_stream():
     async def generate():
         try:
-            async for event in fetch_all_items():
+            async for event in fetch_all_items(_active_folder_id):
                 yield f"data: {json.dumps(event)}\n\n"
                 await asyncio.sleep(0)
         except Exception as exc:

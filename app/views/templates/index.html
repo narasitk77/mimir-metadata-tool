@@ -35,6 +35,8 @@
     .modal-footer { border-top: 1px solid #2d3148; }
     textarea.form-control { background: #0f1117; border-color: #2d3148; color: #e2e8f0; }
     textarea.form-control:focus { background: #0f1117; color: #e2e8f0; border-color: #3b82f6; box-shadow: 0 0 0 .2rem rgba(59,130,246,.25); }
+    #folder-url-input::placeholder { color: #475569; }
+    #folder-url-input:focus { background: #0f1117; color: #e2e8f0; border-color: #3b82f6; box-shadow: 0 0 0 .2rem rgba(59,130,246,.25); }
     ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #0f1117; } ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
   </style>
 </head>
@@ -81,6 +83,18 @@
         <div class="stat-num text-danger" id="stat-error">—</div>
         <div class="text-secondary small">Errors</div>
       </div>
+    </div>
+  </div>
+
+  <!-- Folder Input -->
+  <div class="card p-3 mb-3">
+    <label class="text-secondary small mb-1"><i class="bi bi-folder2-open me-1"></i>Mimir Folder URL หรือ Folder ID</label>
+    <div class="d-flex gap-2">
+      <input type="text" id="folder-url-input" class="form-control form-control-sm"
+        placeholder="https://apac.mjoll.no/folders/xxxxxxxx-xxxx-... หรือ UUID ตรงๆ"
+        style="background:#0f1117;border-color:#2d3148;color:#e2e8f0;font-family:monospace;font-size:.82rem"
+        value="{{ folder_id }}" />
+      <span id="folder-id-badge" class="align-self-center text-secondary small text-nowrap" style="min-width:fit-content"></span>
     </div>
   </div>
 
@@ -336,11 +350,21 @@
 
   // ── Actions ────────────────────────────────────────────────────────────
   async function startFetch() {
+    const folderUrl = document.getElementById('folder-url-input').value.trim();
+    if (!folderUrl) { alert('กรุณาระบุ Folder URL หรือ Folder ID ก่อน'); return; }
+
     const btn = document.getElementById('btn-fetch');
     btn.disabled = true;
-    const r = await fetch('/api/fetch', { method: 'POST' });
+
+    const r = await fetch('/api/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder_url: folderUrl }),
+    });
     if (!r.ok) { alert((await r.json()).detail); btn.disabled = false; return; }
 
+    const { folder_id } = await r.json();
+    document.getElementById('folder-id-badge').textContent = `ID: ${folder_id}`;
     showProgress('Fetching from Mimir…');
     const es = new EventSource('/api/fetch/stream');
     es.onmessage = e => {

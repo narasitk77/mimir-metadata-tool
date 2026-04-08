@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 import httpx
 from app.config import settings
@@ -10,11 +10,33 @@ from app.models.asset import Asset
 logger = logging.getLogger(__name__)
 
 
-async def fetch_all_items() -> AsyncGenerator[dict, None]:
+def extract_folder_id(folder_url: str) -> str:
+    """
+    รับ URL หรือ folder ID ดิบ แล้วคืน folder ID (UUID)
+    รองรับ:
+      - UUID ตรงๆ  : 1bff1e1d-4542-47a4-b083-a98adbf1b230
+      - URL แบบ    : https://apac.mjoll.no/folder/1bff1e1d-...
+                     https://apac.mjoll.no/folders/1bff1e1d-...
+    """
+    import re
+    uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    match = re.search(uuid_pattern, folder_url, re.IGNORECASE)
+    if match:
+        return match.group(0)
+    raise ValueError(f"ไม่พบ Folder ID ใน: {folder_url}")
+
+
+async def fetch_all_items(folder_id: Optional[str] = None) -> AsyncGenerator[dict, None]:
     """
     Fetch all items from Mimir folder and upsert into DB.
     Yields progress dicts for SSE streaming.
+    folder_id: UUID โดยตรง หรือ None เพื่อใช้ค่าจาก config
     """
+    resolved_folder_id = folder_id or settings.FOLDER_ID
+    if not resolved_folder_id:
+        yield {"type": "error", "message": "ยังไม่ได้ระบุ Folder ID"}
+        return
+
     from_offset = 0
     total_fetched = 0
     total_in_api = 0
@@ -23,7 +45,7 @@ async def fetch_all_items() -> AsyncGenerator[dict, None]:
         while True:
             params = {
                 "searchString": "*",
-                "folderId": settings.FOLDER_ID,
+                "folderId": resolved_folder_id,
                 "itemsPerPage": settings.ITEMS_PER_PAGE,
                 "from": from_offset,
                 "includeSubfolders": "true",
