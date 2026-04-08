@@ -3,7 +3,16 @@ import json
 import logging
 from pathlib import Path
 
+from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pydantic import BaseModel
+
+class AssetUpdate(BaseModel):
+    ai_title: Optional[str] = None
+    ai_description: Optional[str] = None
+    ai_category: Optional[str] = None
+    ai_subcat: Optional[str] = None
+    ai_keyword: Optional[str] = None
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -92,6 +101,19 @@ async def clear_assets(db: Session = Depends(get_db)):
     db.query(Asset).delete()
     db.commit()
     return {"deleted": count}
+
+
+@router.patch("/api/assets/{item_id}")
+async def update_asset(item_id: str, body: AssetUpdate, db: Session = Depends(get_db)):
+    asset = db.query(Asset).filter(Asset.item_id == item_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(asset, field, value)
+    if asset.status not in ("done", "error"):
+        asset.status = "done"
+    db.commit()
+    return {"ok": True}
 
 
 @router.patch("/api/assets/{item_id}/reset")

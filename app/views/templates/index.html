@@ -35,6 +35,9 @@
     .modal-footer { border-top: 1px solid #2d3148; }
     textarea.form-control { background: #0f1117; border-color: #2d3148; color: #e2e8f0; }
     textarea.form-control:focus { background: #0f1117; color: #e2e8f0; border-color: #3b82f6; box-shadow: 0 0 0 .2rem rgba(59,130,246,.25); }
+    .field-edit { background: #0f1117 !important; border-color: #2d3148 !important; color: #e2e8f0 !important; }
+    .field-edit:focus { border-color: #3b82f6 !important; box-shadow: 0 0 0 .2rem rgba(59,130,246,.2) !important; }
+    .field-edit option { background: #1a1d27; }
     #folder-url-input::placeholder { color: #475569; }
     #folder-url-input:focus { background: #0f1117; color: #e2e8f0; border-color: #3b82f6; box-shadow: 0 0 0 .2rem rgba(59,130,246,.25); }
     ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #0f1117; } ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
@@ -173,54 +176,85 @@
 
 <!-- Detail Modal -->
 <div class="modal fade" id="detailModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h6 class="modal-title" id="modal-item-id">Asset Detail</h6>
+        <div>
+          <h6 class="modal-title mb-0" id="modal-item-id">Asset Detail</h6>
+          <div class="text-secondary" style="font-size:.72rem" id="modal-ingest-path"></div>
+        </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body row g-3">
-        <div class="col-md-4 text-center">
-          <img id="modal-thumb" src="" class="img-fluid rounded" style="max-height:220px;object-fit:cover" />
-          <div class="mt-2 text-secondary small" id="modal-meta"></div>
+      <div class="modal-body">
+        <!-- Thumbnail + meta -->
+        <div class="d-flex gap-3 mb-3">
+          <img id="modal-thumb" src="" class="rounded flex-shrink-0" style="width:120px;height:80px;object-fit:cover" />
+          <div class="text-secondary small align-self-center" id="modal-meta"></div>
         </div>
-        <div class="col-md-8">
-          <div class="mb-2">
-            <label class="text-secondary small">AI Title</label>
-            <div class="fw-semibold" id="modal-ai-title"></div>
+
+        <!-- Editable fields -->
+        <div class="mb-3">
+          <label class="form-label text-secondary small mb-1">AI Title</label>
+          <input type="text" class="form-control form-control-sm field-edit" id="edit-ai-title" placeholder="ชื่อภาษาไทย รูปแบบ YYYY.MM.DD_หัวข้อ_ชื่อ" />
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label text-secondary small mb-1">Description</label>
+          <textarea class="form-control form-control-sm field-edit" id="edit-ai-desc" rows="4" placeholder="อธิบาย 3-5 ประโยค ว่าใคร ทำอะไร ที่ไหน"></textarea>
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label text-secondary small mb-1">Category</label>
+            <select class="form-select form-select-sm field-edit" id="edit-ai-cat">
+              <option value="">— เลือก —</option>
+              <option>Photo</option>
+              <option>Footage</option>
+              <option>Audio</option>
+              <option>Graphic</option>
+              <option>Deliverable</option>
+            </select>
           </div>
-          <div class="mb-2">
-            <label class="text-secondary small">Description</label>
-            <div class="small" id="modal-ai-desc" style="white-space:pre-wrap"></div>
+          <div class="col-6">
+            <label class="form-label text-secondary small mb-1">Sub-category</label>
+            <select class="form-select form-select-sm field-edit" id="edit-ai-subcat">
+              <option value="">— เลือก —</option>
+              <option>Portrait</option>
+              <option>Event</option>
+              <option>B-Roll</option>
+              <option>Drone</option>
+              <option>BTS</option>
+              <option>Interview</option>
+              <option>Press Conference</option>
+              <option>Protest</option>
+              <option>Document</option>
+              <option>Product</option>
+            </select>
           </div>
-          <div class="row g-2 mb-2">
-            <div class="col-6">
-              <label class="text-secondary small">Category</label>
-              <div id="modal-ai-cat"></div>
-            </div>
-            <div class="col-6">
-              <label class="text-secondary small">Sub-category</label>
-              <div id="modal-ai-subcat"></div>
-            </div>
-          </div>
-          <div class="mb-2">
-            <label class="text-secondary small">Keywords</label>
-            <div id="modal-ai-keywords"></div>
-          </div>
-          <div>
-            <label class="text-secondary small">Ingest Path</label>
-            <div class="small text-muted" id="modal-ingest-path" style="word-break:break-all"></div>
-          </div>
+        </div>
+
+        <div class="mb-2">
+          <label class="form-label text-secondary small mb-1">Keywords <span class="text-muted">(คั่นด้วย comma)</span></label>
+          <input type="text" class="form-control form-control-sm field-edit" id="edit-ai-keyword" placeholder="คำ1, คำ2, คำ3, คำ4, คำ5" />
+          <div class="mt-1" id="keyword-preview"></div>
         </div>
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline-warning btn-sm" id="btn-modal-reset" onclick="resetFromModal()">
-          <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Pending
-        </button>
-        <button class="btn btn-outline-info btn-sm" id="btn-modal-push" onclick="pushFromModal()">
-          <i class="bi bi-upload me-1"></i>Push to Mimir
-        </button>
-        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+
+      <div class="modal-footer justify-content-between">
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-warning btn-sm" onclick="resetFromModal()">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Pending
+          </button>
+          <button class="btn btn-outline-info btn-sm" onclick="pushFromModal()">
+            <i class="bi bi-upload me-1"></i>Push to Mimir
+          </button>
+        </div>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">ยกเลิก</button>
+          <button class="btn btn-primary btn-sm" onclick="saveFromModal()">
+            <i class="bi bi-floppy me-1"></i>บันทึก
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -241,6 +275,7 @@
     loadStats();
     loadAssets();
     startAutoRefresh();
+    document.getElementById('edit-ai-keyword').addEventListener('input', e => renderKeywordPreview(e.target.value));
   });
 
   function startAutoRefresh() {
@@ -319,19 +354,54 @@
     modalItemId = itemId;
     const r = await fetch(`/api/assets/${itemId}`);
     const a = await r.json();
-    document.getElementById('modal-item-id').textContent = itemId;
+
+    document.getElementById('modal-item-id').textContent = a.title || itemId;
+    document.getElementById('modal-ingest-path').textContent = a.ingest_path || '';
     document.getElementById('modal-thumb').src = a.thumbnail_url || '';
     document.getElementById('modal-thumb').style.display = a.thumbnail_url ? '' : 'none';
-    document.getElementById('modal-meta').textContent =
-      [a.item_type, a.file_type, a.width && a.height ? `${a.width}×${a.height}` : '', a.filesize_mb ? `${a.filesize_mb} MB` : ''].filter(Boolean).join(' · ');
-    document.getElementById('modal-ai-title').textContent = a.ai_title || '—';
-    document.getElementById('modal-ai-desc').textContent = a.ai_description || '—';
-    document.getElementById('modal-ai-cat').textContent = a.ai_category || '—';
-    document.getElementById('modal-ai-subcat').textContent = a.ai_subcat || '—';
-    document.getElementById('modal-ai-keywords').innerHTML = (a.ai_keyword || '').split(',').filter(k=>k.trim()).map(k =>
-      `<span class="badge bg-secondary me-1 mb-1">${esc(k.trim())}</span>`).join('');
-    document.getElementById('modal-ingest-path').textContent = a.ingest_path || '—';
+    document.getElementById('modal-meta').innerHTML =
+      [a.item_type, a.file_type,
+       a.width && a.height ? `${a.width}×${a.height}` : '',
+       a.filesize_mb ? `${a.filesize_mb} MB` : '',
+       `<span class="badge ${badgeClass(a.status)} ms-1">${a.status}</span>`
+      ].filter(Boolean).join(' · ');
+
+    document.getElementById('edit-ai-title').value   = a.ai_title || '';
+    document.getElementById('edit-ai-desc').value    = a.ai_description || '';
+    document.getElementById('edit-ai-cat').value     = a.ai_category || '';
+    document.getElementById('edit-ai-subcat').value  = a.ai_subcat || '';
+    document.getElementById('edit-ai-keyword').value = a.ai_keyword || '';
+    renderKeywordPreview(a.ai_keyword || '');
+
     new bootstrap.Modal(document.getElementById('detailModal')).show();
+  }
+
+  function renderKeywordPreview(raw) {
+    document.getElementById('keyword-preview').innerHTML =
+      raw.split(',').filter(k => k.trim()).map(k =>
+        `<span class="badge bg-secondary me-1 mb-1">${esc(k.trim())}</span>`).join('');
+  }
+
+  async function saveFromModal() {
+    if (!modalItemId) return;
+    const payload = {
+      ai_title:       document.getElementById('edit-ai-title').value,
+      ai_description: document.getElementById('edit-ai-desc').value,
+      ai_category:    document.getElementById('edit-ai-cat').value,
+      ai_subcat:      document.getElementById('edit-ai-subcat').value,
+      ai_keyword:     document.getElementById('edit-ai-keyword').value,
+    };
+    const r = await fetch(`/api/assets/${modalItemId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (r.ok) {
+      bootstrap.Modal.getInstance(document.getElementById('detailModal'))?.hide();
+      loadAssets();
+    } else {
+      alert('บันทึกไม่สำเร็จ: ' + (await r.json()).detail);
+    }
   }
 
   async function resetFromModal() {
@@ -344,7 +414,7 @@
     if (!modalItemId) return;
     const r = await fetch(`/api/assets/${modalItemId}/push`, { method: 'POST' });
     const d = await r.json();
-    alert(d.ok ? 'Pushed to Mimir successfully.' : `Error: ${d.detail}`);
+    alert(d.ok ? 'Push สำเร็จแล้ว' : `Error: ${d.detail}`);
   }
 
   // ── Actions ────────────────────────────────────────────────────────────
