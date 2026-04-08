@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     MIMIR_TOKEN: str = ""
     FOLDER_ID: str = ""
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-2.0-flash-001"
     DATABASE_URL: str = "sqlite:///./data/mimir_assets.db"
     ITEMS_PER_PAGE: int = 100
     GEMINI_DELAY_MS: int = 4500
