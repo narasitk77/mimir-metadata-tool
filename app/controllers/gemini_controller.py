@@ -2,9 +2,11 @@ import asyncio
 import base64
 import json
 import logging
-from typing import AsyncGenerator
+from datetime import datetime, date
+from typing import AsyncGenerator, Optional
 
 import httpx
+from sqlalchemy import func
 from app.config import settings
 from app.database import SessionLocal
 from app.models.asset import Asset
@@ -34,6 +36,44 @@ You are a media metadata specialist for THE STANDARD, a Thai news and media comp
 - keyword 5-10 คำ ครอบคลุมคน สถานที่ หัวข้อ และ action
 - Return JSON only ห้าม return อย่างอื่น\
 """
+
+
+def get_daily_usage() -> dict:
+    """คืน requests และ tokens ที่ใช้ไปวันนี้จาก DB"""
+    db = SessionLocal()
+    try:
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        row = db.query(
+            func.count(Asset.item_id).label("requests"),
+            func.coalesce(func.sum(Asset.tokens_input + Asset.tokens_output), 0).label("tokens"),
+        ).filter(
+            Asset.processed_at >= today_start,
+            Asset.status == "done",
+        ).first()
+        return {
+            "requests": row.requests or 0,
+            "tokens":   int(row.tokens or 0),
+        }
+    finally:
+        db.close()
+
+
+def check_rate_limit() -> Optional[str]:
+    """
+    ตรวจ daily usage เทียบกับ free tier limit
+    คืน None = ยังใช้ได้, คืน string = เหตุผลที่ต้องหยุด
+    """
+    usage = get_daily_usage()
+    warn_rpd = int(settings.FREE_TIER_RPD * settings.FREE_TIER_WARN_PCT)
+    warn_tpd = int(settings.FREE_TIER_TPD * settings.FREE_TIER_WARN_PCT)
+
+    if usage["requests"] >= warn_rpd:
+        return (f"ใกล้ถึง limit รายวัน: {usage['requests']}/{settings.FREE_TIER_RPD} requests "
+                f"({settings.FREE_TIER_WARN_PCT*100:.0f}%) — หยุดรอ reset เที่ยงคืน UTC")
+    if usage["tokens"] >= warn_tpd:
+        return (f"ใกล้ถึง token limit รายวัน: {usage['tokens']:,}/{settings.FREE_TIER_TPD:,} tokens "
+                f"({settings.FREE_TIER_WARN_PCT*100:.0f}%) — หยุดรอ reset เที่ยงคืน UTC")
+    return None
 
 
 async def _analyze_one(client: httpx.AsyncClient, asset: Asset) -> dict:
@@ -93,6 +133,14 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
 
     async with httpx.AsyncClient() as client:
         for item_id in pending_ids:
+
+            # ── ตรวจ rate limit ก่อนทุก request ──────────────────────────
+            limit_msg = check_rate_limit()
+            if limit_msg:
+                yield {"type": "rate_limit", "message": limit_msg,
+                       "processed": processed, "errors": errors, "total": total}
+                return
+
             db = SessionLocal()
             try:
                 asset = db.query(Asset).filter(Asset.item_id == item_id).first()
@@ -115,6 +163,7 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
                 asset.ai_keyword     = ", ".join(keywords) if isinstance(keywords, list) else str(keywords)
                 asset.tokens_input   = result.get("_tokens_input", 0)
                 asset.tokens_output  = result.get("_tokens_output", 0)
+                asset.processed_at   = datetime.utcnow()
                 asset.status         = "done"
                 asset.error_log      = ""
                 db.commit()

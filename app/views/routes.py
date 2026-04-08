@@ -72,6 +72,9 @@ PRICE_OUTPUT_PER_M = 0.60
 @router.get("/api/token-stats")
 async def get_token_stats(db: Session = Depends(get_db)):
     from sqlalchemy import func
+    from datetime import datetime, date
+    from app.controllers.gemini_controller import get_daily_usage
+
     row = db.query(
         func.sum(Asset.tokens_input).label("total_input"),
         func.sum(Asset.tokens_output).label("total_output"),
@@ -89,6 +92,10 @@ async def get_token_stats(db: Session = Depends(get_db)):
     avg_input  = round(total_input  / analyzed, 1) if analyzed else 0
     avg_output = round(total_output / analyzed, 1) if analyzed else 0
 
+    today = get_daily_usage()
+    rpd_pct = round(today["requests"] / settings.FREE_TIER_RPD * 100, 1)
+    tpd_pct = round(today["tokens"]   / settings.FREE_TIER_TPD * 100, 1)
+
     return {
         "analyzed":      analyzed,
         "total_input":   int(total_input),
@@ -99,10 +106,17 @@ async def get_token_stats(db: Session = Depends(get_db)):
         "cost_input_usd":  round(cost_input,  6),
         "cost_output_usd": round(cost_output, 6),
         "cost_total_usd":  round(cost_total,  6),
-        "cost_total_thb":  round(cost_total * 34, 4),  # approximate THB
+        "cost_total_thb":  round(cost_total * 34, 4),
         "model":           settings.GEMINI_MODEL,
         "price_input_per_m":  PRICE_INPUT_PER_M,
         "price_output_per_m": PRICE_OUTPUT_PER_M,
+        "today_requests": today["requests"],
+        "today_tokens":   today["tokens"],
+        "rpd_limit":      settings.FREE_TIER_RPD,
+        "tpd_limit":      settings.FREE_TIER_TPD,
+        "rpd_pct":        rpd_pct,
+        "tpd_pct":        tpd_pct,
+        "warn_pct":       int(settings.FREE_TIER_WARN_PCT * 100),
     }
 
 
@@ -222,6 +236,8 @@ async def batch_stream():
             async for event in run_gemini_batch():
                 yield f"data: {json.dumps(event)}\n\n"
                 await asyncio.sleep(0)
+                if event.get("type") == "rate_limit":
+                    return
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, String, Text
+from sqlalchemy import Column, DateTime, Float, String, Text
 from app.database import Base
 
 
@@ -29,8 +29,9 @@ class Asset(Base):
     ai_keyword = Column(String, default="")
 
     # --- Token usage ---
-    tokens_input = Column(Float, nullable=True)
+    tokens_input  = Column(Float, nullable=True)
     tokens_output = Column(Float, nullable=True)
+    processed_at  = Column(DateTime, nullable=True)
 
     # --- Default ---
     rights = Column(String, default="THE STANDARD/All Rights Reserved")

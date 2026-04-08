@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     GEMINI_DELAY_MS: int = 4500
     BATCH_SIZE: int = 20
 
+    # Gemini Free Tier limits (gemini-2.5-flash)
+    FREE_TIER_RPD: int = 500        # requests per day
+    FREE_TIER_RPM: int = 10         # requests per minute
+    FREE_TIER_TPD: int = 1_000_000  # tokens per day
+    FREE_TIER_WARN_PCT: float = 0.9 # หยุดที่ 90% ของ limit
+
     class Config:
         env_file = ".env"
 

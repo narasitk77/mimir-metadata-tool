@@ -88,7 +88,7 @@
     </div>
     <div class="col-12 col-md-4">
       <div class="card card-stat p-3">
-        <div class="d-flex justify-content-between align-items-start">
+        <div class="d-flex justify-content-between align-items-start mb-2">
           <div>
             <div class="text-secondary small mb-1"><i class="bi bi-coin me-1"></i>Token Cost <span class="text-muted" id="token-model" style="font-size:.7rem"></span></div>
             <div class="d-flex align-items-baseline gap-2">
@@ -101,6 +101,27 @@
             <div>Input: <span id="stat-tokens-in" class="text-light">—</span></div>
             <div>Output: <span id="stat-tokens-out" class="text-light">—</span></div>
             <div>Avg/รูป: <span id="stat-tokens-avg" class="text-light">—</span></div>
+          </div>
+        </div>
+        <!-- Free Tier usage bars -->
+        <div style="font-size:.7rem">
+          <div class="d-flex justify-content-between text-secondary mb-1">
+            <span><i class="bi bi-shield-check me-1"></i>Free Tier วันนี้</span>
+            <span id="tier-reset-hint" class="text-muted"></span>
+          </div>
+          <div class="d-flex justify-content-between text-secondary mb-1">
+            <span>Requests <span id="tier-req-count" class="text-light"></span></span>
+            <span id="tier-req-pct"></span>
+          </div>
+          <div class="progress mb-1" style="height:4px">
+            <div class="progress-bar" id="tier-req-bar" style="width:0%"></div>
+          </div>
+          <div class="d-flex justify-content-between text-secondary mb-1">
+            <span>Tokens <span id="tier-tok-count" class="text-light"></span></span>
+            <span id="tier-tok-pct"></span>
+          </div>
+          <div class="progress" style="height:4px">
+            <div class="progress-bar" id="tier-tok-bar" style="width:0%"></div>
           </div>
         </div>
       </div>
@@ -315,6 +336,7 @@
   async function loadTokenStats() {
     const r = await fetch('/api/token-stats');
     const d = await r.json();
+
     document.getElementById('token-model').textContent = d.model;
     document.getElementById('stat-cost-thb').textContent = d.analyzed ? d.cost_total_thb.toFixed(4) : '0.0000';
     document.getElementById('stat-cost-usd').textContent = d.analyzed ? `$${d.cost_total_usd.toFixed(5)}` : '';
@@ -322,6 +344,23 @@
     document.getElementById('stat-tokens-out').textContent = d.total_output.toLocaleString();
     document.getElementById('stat-tokens-avg').textContent = d.analyzed
       ? `${(d.avg_input + d.avg_output).toLocaleString()} tok` : '—';
+
+    // Free Tier bars
+    const reqColor = d.rpd_pct >= d.warn_pct ? '#f87171' : d.rpd_pct >= 70 ? '#fbbf24' : '#4ade80';
+    const tokColor = d.tpd_pct >= d.warn_pct ? '#f87171' : d.tpd_pct >= 70 ? '#fbbf24' : '#4ade80';
+    document.getElementById('tier-req-count').textContent = `${d.today_requests}/${d.rpd_limit}`;
+    document.getElementById('tier-req-pct').textContent   = `${d.rpd_pct}%`;
+    document.getElementById('tier-req-bar').style.cssText = `width:${Math.min(d.rpd_pct,100)}%;background:${reqColor}`;
+    document.getElementById('tier-tok-count').textContent = `${d.today_tokens.toLocaleString()}/${(d.tpd_limit/1000).toFixed(0)}K`;
+    document.getElementById('tier-tok-pct').textContent   = `${d.tpd_pct}%`;
+    document.getElementById('tier-tok-bar').style.cssText = `width:${Math.min(d.tpd_pct,100)}%;background:${tokColor}`;
+
+    // แสดงเวลา reset
+    const now = new Date();
+    const resetUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()+1));
+    const diffH = Math.floor((resetUTC - now) / 3600000);
+    const diffM = Math.floor(((resetUTC - now) % 3600000) / 60000);
+    document.getElementById('tier-reset-hint').textContent = `reset ใน ${diffH}ชม. ${diffM}น.`;
   }
 
   // ── Assets Table ───────────────────────────────────────────────────────
@@ -504,7 +543,12 @@
         setProgress(d.total, d.total, `Done — ${d.processed} processed, ${d.errors} errors`);
         appendLog(`✓ Batch complete: ${d.processed} done, ${d.errors} errors`);
         es.close(); btn.disabled = false;
-        loadStats(); loadAssets();
+        loadStats(); loadAssets(); loadTokenStats();
+      } else if (d.type === 'rate_limit') {
+        setProgress(d.processed + d.errors, d.total, `⚠️ หยุดชั่วคราว — ${d.message}`);
+        appendLog(`⚠️ Rate limit: ${d.message}`);
+        es.close(); btn.disabled = false;
+        loadTokenStats();
       } else if (d.type === 'error') {
         appendLog(`✗ Error: ${d.message}`);
         es.close(); btn.disabled = false;

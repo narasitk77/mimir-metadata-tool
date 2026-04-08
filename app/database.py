@@ -26,8 +26,9 @@ def get_db():
 def run_migrations():
     """Add new columns to existing DB without losing data."""
     new_columns = [
-        ("tokens_input", "REAL"),
+        ("tokens_input",  "REAL"),
         ("tokens_output", "REAL"),
+        ("processed_at",  "DATETIME"),
     ]
     with engine.connect() as conn:
         for col, col_type in new_columns:
