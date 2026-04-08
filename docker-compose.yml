@@ -1,0 +1,33 @@
+# Production / Portainer Stack
+# Deploy via: Portainer > Stacks > Add Stack > Repository
+services:
+  mimir-tool:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mimir-metadata-tool:latest
+    container_name: mimir-metadata-tool
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - mimir_data:/app/data
+    environment:
+      MIMIR_BASE_URL: ${MIMIR_BASE_URL:-https://apac.mjoll.no}
+      MIMIR_TOKEN: ${MIMIR_TOKEN}
+      FOLDER_ID: ${FOLDER_ID}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+      ITEMS_PER_PAGE: ${ITEMS_PER_PAGE:-100}
+      GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-4500}
+      BATCH_SIZE: ${BATCH_SIZE:-20}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/stats')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  mimir_data:
+    driver: local
