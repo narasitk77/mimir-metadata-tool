@@ -29,7 +29,6 @@ _active_folder_id: str = ""
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {
         "request": request,
-        "folder_id": settings.FOLDER_ID,
         "mimir_url": settings.MIMIR_BASE_URL,
         "gemini_model": settings.GEMINI_MODEL,
     })
