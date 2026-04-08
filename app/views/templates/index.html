@@ -62,28 +62,47 @@
 
   <!-- Stats Row -->
   <div class="row g-3 mb-4" id="stats-row">
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
       <div class="card card-stat p-3 text-center">
         <div class="stat-num text-white" id="stat-total">—</div>
         <div class="text-secondary small">Total Assets</div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
       <div class="card card-stat p-3 text-center">
         <div class="stat-num text-secondary" id="stat-pending">—</div>
         <div class="text-secondary small">Pending</div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
       <div class="card card-stat p-3 text-center">
         <div class="stat-num text-success" id="stat-done">—</div>
         <div class="text-secondary small">Done</div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
       <div class="card card-stat p-3 text-center">
         <div class="stat-num text-danger" id="stat-error">—</div>
         <div class="text-secondary small">Errors</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="card card-stat p-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div class="text-secondary small mb-1"><i class="bi bi-coin me-1"></i>Token Cost <span class="text-muted" id="token-model" style="font-size:.7rem"></span></div>
+            <div class="d-flex align-items-baseline gap-2">
+              <span class="stat-num text-warning" id="stat-cost-thb" style="font-size:1.6rem">—</span>
+              <span class="text-secondary small">THB</span>
+              <span class="text-muted small" id="stat-cost-usd"></span>
+            </div>
+          </div>
+          <div class="text-end text-secondary" style="font-size:.72rem;line-height:1.7">
+            <div>Input: <span id="stat-tokens-in" class="text-light">—</span></div>
+            <div>Output: <span id="stat-tokens-out" class="text-light">—</span></div>
+            <div>Avg/รูป: <span id="stat-tokens-avg" class="text-light">—</span></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -273,13 +292,14 @@
   // ── Init ───────────────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', () => {
     loadStats();
+    loadTokenStats();
     loadAssets();
     startAutoRefresh();
     document.getElementById('edit-ai-keyword').addEventListener('input', e => renderKeywordPreview(e.target.value));
   });
 
   function startAutoRefresh() {
-    refreshInterval = setInterval(() => { loadStats(); }, 5000);
+    refreshInterval = setInterval(() => { loadStats(); loadTokenStats(); }, 5000);
   }
 
   // ── Stats ──────────────────────────────────────────────────────────────
@@ -290,6 +310,18 @@
     document.getElementById('stat-pending').textContent = d.pending + (d.processing ? ` (+${d.processing})` : '');
     document.getElementById('stat-done').textContent = d.done;
     document.getElementById('stat-error').textContent = d.error;
+  }
+
+  async function loadTokenStats() {
+    const r = await fetch('/api/token-stats');
+    const d = await r.json();
+    document.getElementById('token-model').textContent = d.model;
+    document.getElementById('stat-cost-thb').textContent = d.analyzed ? d.cost_total_thb.toFixed(4) : '0.0000';
+    document.getElementById('stat-cost-usd').textContent = d.analyzed ? `$${d.cost_total_usd.toFixed(5)}` : '';
+    document.getElementById('stat-tokens-in').textContent  = d.total_input.toLocaleString();
+    document.getElementById('stat-tokens-out').textContent = d.total_output.toLocaleString();
+    document.getElementById('stat-tokens-avg').textContent = d.analyzed
+      ? `${(d.avg_input + d.avg_output).toLocaleString()} tok` : '—';
   }
 
   // ── Assets Table ───────────────────────────────────────────────────────

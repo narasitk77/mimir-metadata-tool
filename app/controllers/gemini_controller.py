@@ -37,7 +37,7 @@ You are a media metadata specialist for THE STANDARD, a Thai news and media comp
 
 
 async def _analyze_one(client: httpx.AsyncClient, asset: Asset) -> dict:
-    """Call Gemini Vision for a single asset. Returns parsed JSON dict."""
+    """Call Gemini Vision for a single asset. Returns parsed JSON dict + token usage."""
     img_resp = await client.get(asset.thumbnail_url, timeout=30)
     if img_resp.status_code != 200:
         raise ValueError(f"Cannot fetch thumbnail ({img_resp.status_code})")
@@ -66,9 +66,16 @@ async def _analyze_one(client: httpx.AsyncClient, asset: Asset) -> dict:
     if resp.status_code != 200:
         raise ValueError(f"Gemini error {resp.status_code}: {resp.text[:200]}")
 
-    raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    body = resp.json()
+    raw = body["candidates"][0]["content"]["parts"][0]["text"]
     cleaned = raw.replace("```json", "").replace("```", "").strip()
-    return json.loads(cleaned)
+    result = json.loads(cleaned)
+
+    # แนบ token usage กลับมาด้วย
+    usage = body.get("usageMetadata", {})
+    result["_tokens_input"]  = usage.get("promptTokenCount", 0)
+    result["_tokens_output"] = usage.get("candidatesTokenCount", 0)
+    return result
 
 
 async def run_gemini_batch() -> AsyncGenerator[dict, None]:
@@ -101,13 +108,15 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
                 result = await _analyze_one(client, asset)
 
                 keywords = result.get("keyword", [])
-                asset.ai_title = result.get("title", "")
+                asset.ai_title       = result.get("title", "")
                 asset.ai_description = result.get("description", "")
-                asset.ai_category = result.get("category", "")
-                asset.ai_subcat = result.get("subcat", "")
-                asset.ai_keyword = ", ".join(keywords) if isinstance(keywords, list) else str(keywords)
-                asset.status = "done"
-                asset.error_log = ""
+                asset.ai_category    = result.get("category", "")
+                asset.ai_subcat      = result.get("subcat", "")
+                asset.ai_keyword     = ", ".join(keywords) if isinstance(keywords, list) else str(keywords)
+                asset.tokens_input   = result.get("_tokens_input", 0)
+                asset.tokens_output  = result.get("_tokens_output", 0)
+                asset.status         = "done"
+                asset.error_log      = ""
                 db.commit()
 
                 processed += 1

@@ -63,6 +63,49 @@ async def get_stats(db: Session = Depends(get_db)):
     }
 
 
+# ── API: Token usage & cost ────────────────────────────────────────────────────
+
+# Gemini 2.5 Flash pricing (USD per 1M tokens)
+PRICE_INPUT_PER_M  = 0.15
+PRICE_OUTPUT_PER_M = 0.60
+
+@router.get("/api/token-stats")
+async def get_token_stats(db: Session = Depends(get_db)):
+    from sqlalchemy import func
+    row = db.query(
+        func.sum(Asset.tokens_input).label("total_input"),
+        func.sum(Asset.tokens_output).label("total_output"),
+        func.count(Asset.item_id).filter(Asset.tokens_input != None).label("analyzed"),
+    ).first()
+
+    total_input  = row.total_input  or 0
+    total_output = row.total_output or 0
+    analyzed     = row.analyzed     or 0
+
+    cost_input  = (total_input  / 1_000_000) * PRICE_INPUT_PER_M
+    cost_output = (total_output / 1_000_000) * PRICE_OUTPUT_PER_M
+    cost_total  = cost_input + cost_output
+
+    avg_input  = round(total_input  / analyzed, 1) if analyzed else 0
+    avg_output = round(total_output / analyzed, 1) if analyzed else 0
+
+    return {
+        "analyzed":      analyzed,
+        "total_input":   int(total_input),
+        "total_output":  int(total_output),
+        "total_tokens":  int(total_input + total_output),
+        "avg_input":     avg_input,
+        "avg_output":    avg_output,
+        "cost_input_usd":  round(cost_input,  6),
+        "cost_output_usd": round(cost_output, 6),
+        "cost_total_usd":  round(cost_total,  6),
+        "cost_total_thb":  round(cost_total * 34, 4),  # approximate THB
+        "model":           settings.GEMINI_MODEL,
+        "price_input_per_m":  PRICE_INPUT_PER_M,
+        "price_output_per_m": PRICE_OUTPUT_PER_M,
+    }
+
+
 # ── API: Assets list ───────────────────────────────────────────────────────────
 
 @router.get("/api/assets")

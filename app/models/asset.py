@@ -28,6 +28,10 @@ class Asset(Base):
     ai_subcat = Column(String, default="")
     ai_keyword = Column(String, default="")
 
+    # --- Token usage ---
+    tokens_input = Column(Float, nullable=True)
+    tokens_output = Column(Float, nullable=True)
+
     # --- Default ---
     rights = Column(String, default="THE STANDARD/All Rights Reserved")
 
@@ -51,5 +55,7 @@ class Asset(Base):
             "ai_category": self.ai_category,
             "ai_subcat": self.ai_subcat,
             "ai_keyword": self.ai_keyword,
+            "tokens_input": self.tokens_input,
+            "tokens_output": self.tokens_output,
             "rights": self.rights,
         }

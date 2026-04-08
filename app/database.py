@@ -21,3 +21,18 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def run_migrations():
+    """Add new columns to existing DB without losing data."""
+    new_columns = [
+        ("tokens_input", "REAL"),
+        ("tokens_output", "REAL"),
+    ]
+    with engine.connect() as conn:
+        for col, col_type in new_columns:
+            try:
+                conn.execute(__import__("sqlalchemy").text(f"ALTER TABLE assets ADD COLUMN {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass  # column already exists
