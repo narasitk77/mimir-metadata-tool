@@ -90,6 +90,7 @@ async def fetch_all_items(folder_id: Optional[str] = None) -> AsyncGenerator[dic
                             aspect_ratio=tfd.get("technical_media_display_aspect_ratio", ""),
                             filesize_mb=round(item["mediaSize"] / 1048576, 2) if item.get("mediaSize") else None,
                             ingest_path=item.get("ingestSourceFullPath", ""),
+                            exif_url=item.get("exifTagsUrl", ""),
                             rights="THE STANDARD/All Rights Reserved",
                         ))
                 db.commit()
@@ -112,7 +113,7 @@ async def fetch_all_items(folder_id: Optional[str] = None) -> AsyncGenerator[dic
 
 async def push_metadata_to_mimir(item_id: str) -> dict:
     """
-    Push AI-generated metadata back to Mimir for a single asset.
+    Push AI+EXIF metadata back to Mimir using POST /api/v1/items/{id}.
     Returns {"ok": True} or {"ok": False, "error": "..."}
     """
     db = SessionLocal()
@@ -123,22 +124,62 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
         if asset.status != "done":
             return {"ok": False, "error": "Asset not yet processed by AI"}
 
-        payload = {
-            "metadata": {
-                "formData": {
-                    "title": asset.ai_title,
-                    "description": asset.ai_description,
-                    "category": asset.ai_category,
-                    "subCategory": asset.ai_subcat,
-                    "keywords": asset.ai_keyword,
-                    "rights": asset.rights,
+        # ดึง createdOn จาก Mimir ก่อน (required field)
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(
+                f"{settings.MIMIR_BASE_URL}/api/v1/items/{item_id}",
+                headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+            )
+            if r.status_code != 200:
+                return {"ok": False, "error": f"Cannot fetch item: HTTP {r.status_code}"}
+            existing = r.json()
+            fd = existing.get("metadata", {}).get("formData", {})
+            created_on = fd.get("default_createdOn") or asset.media_created_on or ""
+            media_created_on = fd.get("default_mediaCreatedOn") or asset.media_created_on or ""
+
+            payload = {
+                "metadata": {
+                    "formId": "default",
+                    "formData": {
+                        # Required
+                        "default_createdOn":            created_on,
+                        "default_mediaCreatedOn":       media_created_on,
+                        # Core AI
+                        "default_title":                asset.ai_title or asset.title,
+                        "default_description":          asset.ai_description,
+                        "default_category":             asset.ai_category,
+                        "default_subCategory":          asset.ai_subcat,
+                        "default_keywords":             asset.ai_keyword,
+                        "default_rights":               asset.rights,
+                        # Extended AI
+                        "default_editorialCategories":  asset.ai_editorial_categories,
+                        "default_location":             asset.ai_location,
+                        "default_persons":              asset.ai_persons,
+                        "default_episodeSegment":       asset.ai_episode_segment,
+                        "default_eventOccasion":        asset.ai_event_occasion,
+                        "default_emotionMood":          asset.ai_emotion_mood,
+                        "default_language":             asset.ai_language,
+                        "default_department":           asset.ai_department,
+                        "default_projectSeries":        asset.ai_project_series,
+                        "default_rightLicense":         asset.ai_right_license,
+                        "default_deliverableType":      asset.ai_deliverable_type,
+                        "default_subjectTags":          asset.ai_subject_tags,
+                        "default_technicalTags":        asset.ai_technical_tags,
+                        "default_visualAttributes":     asset.ai_visual_attributes,
+                        # EXIF
+                        "default_photographer":         asset.exif_photographer,
+                        "default_cameraModel":          asset.exif_camera_model,
+                        "default_creditLine":           asset.exif_credit_line,
+                    }
                 }
             }
-        }
+            # ลบ field ที่ว่างออกเพื่อไม่ overwrite ด้วยค่าว่าง
+            payload["metadata"]["formData"] = {
+                k: v for k, v in payload["metadata"]["formData"].items() if v
+            }
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.patch(
-                f"{settings.MIMIR_BASE_URL}/api/v1/assets/{item_id}",
+            resp = await client.post(
+                f"{settings.MIMIR_BASE_URL}/api/v1/items/{item_id}",
                 json=payload,
                 headers={
                     "x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}",
@@ -146,7 +187,7 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
                 },
             )
 
-        if resp.status_code in (200, 204):
+        if resp.status_code == 200:
             return {"ok": True}
         return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
 

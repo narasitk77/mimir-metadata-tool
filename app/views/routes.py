@@ -2,10 +2,14 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import List, Optional
 
-from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
 
 class AssetUpdate(BaseModel):
     ai_title: Optional[str] = None
@@ -13,9 +17,29 @@ class AssetUpdate(BaseModel):
     ai_category: Optional[str] = None
     ai_subcat: Optional[str] = None
     ai_keyword: Optional[str] = None
-from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+    ai_editorial_categories: Optional[str] = None
+    ai_location: Optional[str] = None
+    ai_persons: Optional[str] = None
+    ai_episode_segment: Optional[str] = None
+    ai_event_occasion: Optional[str] = None
+    ai_emotion_mood: Optional[str] = None
+    ai_language: Optional[str] = None
+    ai_department: Optional[str] = None
+    ai_project_series: Optional[str] = None
+    ai_right_license: Optional[str] = None
+    ai_deliverable_type: Optional[str] = None
+    ai_subject_tags: Optional[str] = None
+    ai_technical_tags: Optional[str] = None
+    ai_visual_attributes: Optional[str] = None
+    exif_photographer: Optional[str] = None
+    exif_camera_model: Optional[str] = None
+    exif_credit_line: Optional[str] = None
+    rights: Optional[str] = None
+
+
+class BulkUpdate(BaseModel):
+    item_ids: List[str]
+    fields: AssetUpdate
 
 from app.config import settings
 from app.controllers.gemini_controller import run_gemini_batch
@@ -171,6 +195,45 @@ async def update_asset(item_id: str, body: AssetUpdate, db: Session = Depends(ge
         asset.status = "done"
     db.commit()
     return {"ok": True}
+
+
+@router.post("/api/assets/bulk-edit")
+async def bulk_edit(body: BulkUpdate, db: Session = Depends(get_db)):
+    """อัพเดท fields เดียวกันให้ assets หลายตัวพร้อมกัน"""
+    if not body.item_ids:
+        raise HTTPException(status_code=400, detail="item_ids is empty")
+    updated = 0
+    fields = body.fields.model_dump(exclude_none=True)
+    for item_id in body.item_ids:
+        asset = db.query(Asset).filter(Asset.item_id == item_id).first()
+        if not asset:
+            continue
+        for field, value in fields.items():
+            setattr(asset, field, value)
+        if asset.status not in ("done", "error"):
+            asset.status = "done"
+        updated += 1
+    db.commit()
+    return {"ok": True, "updated": updated}
+
+
+@router.post("/api/assets/bulk-push")
+async def bulk_push(item_ids: List[str] = Body(..., embed=True)):
+    """Push หลาย assets ขึ้น Mimir พร้อมกัน (SSE)"""
+    async def generate():
+        ok_count = errors = 0
+        for item_id in item_ids:
+            result = await push_metadata_to_mimir(item_id)
+            if result["ok"]:
+                ok_count += 1
+            else:
+                errors += 1
+            yield f"data: {json.dumps({'item_id': item_id, 'ok': result['ok'], 'ok_total': ok_count, 'errors': errors, 'total': len(item_ids)})}\n\n"
+            await asyncio.sleep(0.3)
+        yield f"data: {json.dumps({'type': 'done', 'ok_total': ok_count, 'errors': errors})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.patch("/api/assets/{item_id}/reset")

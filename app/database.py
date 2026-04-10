@@ -26,9 +26,35 @@ def get_db():
 def run_migrations():
     """Add new columns to existing DB without losing data."""
     new_columns = [
-        ("tokens_input",  "REAL"),
-        ("tokens_output", "REAL"),
-        ("processed_at",  "DATETIME"),
+        # token tracking
+        ("tokens_input",           "REAL"),
+        ("tokens_output",          "REAL"),
+        ("processed_at",           "DATETIME"),
+        # exif url
+        ("exif_url",               "TEXT"),
+        # AI extended
+        ("ai_editorial_categories","TEXT"),
+        ("ai_location",            "TEXT"),
+        ("ai_persons",             "TEXT"),
+        ("ai_episode_segment",     "TEXT"),
+        ("ai_event_occasion",      "TEXT"),
+        ("ai_emotion_mood",        "TEXT"),
+        ("ai_language",            "TEXT"),
+        ("ai_department",          "TEXT"),
+        ("ai_project_series",      "TEXT"),
+        ("ai_right_license",       "TEXT"),
+        ("ai_deliverable_type",    "TEXT"),
+        ("ai_subject_tags",        "TEXT"),
+        ("ai_technical_tags",      "TEXT"),
+        ("ai_visual_attributes",   "TEXT"),
+        # EXIF
+        ("exif_photographer",      "TEXT"),
+        ("exif_camera_model",      "TEXT"),
+        ("exif_credit_line",       "TEXT"),
+        ("exif_iso",               "TEXT"),
+        ("exif_aperture",          "TEXT"),
+        ("exif_shutter",           "TEXT"),
+        ("exif_focal_length",      "TEXT"),
     ]
     with engine.connect() as conn:
         for col, col_type in new_columns:

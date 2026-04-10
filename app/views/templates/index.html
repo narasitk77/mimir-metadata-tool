@@ -152,6 +152,9 @@
       <button class="btn btn-outline-info btn-sm" id="btn-push-all" onclick="pushAll()">
         <i class="bi bi-upload me-1"></i>Push All to Mimir
       </button>
+      <button class="btn btn-outline-warning btn-sm" id="btn-bulk-edit" onclick="openBulkEdit()" disabled>
+        <i class="bi bi-pencil-square me-1"></i>Bulk Edit <span id="bulk-count-badge" class="badge bg-warning text-dark ms-1" style="display:none"></span>
+      </button>
       <div class="vr mx-1 d-none d-md-block"></div>
       <div class="btn-group btn-group-sm" role="group" id="filter-group">
         <button type="button" class="btn btn-outline-secondary filter-btn active" data-filter="all" onclick="setFilter(this)">All</button>
@@ -185,17 +188,17 @@
       <table class="table table-hover mb-0" id="assets-table">
         <thead>
           <tr>
+            <th style="width:36px"><input type="checkbox" class="form-check-input" id="check-all" onchange="toggleAllCheck(this)"></th>
             <th style="width:70px">Thumb</th>
             <th>Original Title</th>
             <th>AI Title</th>
             <th style="width:100px">Category</th>
-            <th style="width:80px">Type</th>
             <th style="width:90px">Status</th>
             <th style="width:100px">Actions</th>
           </tr>
         </thead>
         <tbody id="assets-tbody">
-          <tr><td colspan="7" class="text-center text-secondary py-5">No assets loaded yet — click "Fetch from Mimir"</td></tr>
+          <tr><td colspan="8" class="text-center text-secondary py-5">No assets loaded yet — click "Fetch from Mimir"</td></tr>
         </tbody>
       </table>
     </div>
@@ -214,9 +217,9 @@
   </div>
 </div>
 
-<!-- Detail Modal -->
+<!-- ══════════════ Detail Modal ══════════════ -->
 <div class="modal fade" id="detailModal" tabindex="-1">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <div>
@@ -226,60 +229,139 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <!-- Thumbnail + meta -->
-        <div class="d-flex gap-3 mb-3">
-          <img id="modal-thumb" src="" class="rounded flex-shrink-0" style="width:120px;height:80px;object-fit:cover" />
-          <div class="text-secondary small align-self-center" id="modal-meta"></div>
+
+        <!-- Thumbnail + technical meta -->
+        <div class="d-flex gap-3 mb-3 pb-3" style="border-bottom:1px solid #2d3148">
+          <img id="modal-thumb" src="" class="rounded flex-shrink-0" style="width:140px;height:93px;object-fit:cover" />
+          <div class="flex-grow-1">
+            <div class="text-secondary small mb-1" id="modal-meta"></div>
+            <div class="row g-1 mt-1" style="font-size:.75rem;color:#94a3b8">
+              <div class="col-auto"><i class="bi bi-camera me-1"></i><span id="m-camera"></span></div>
+              <div class="col-auto"><i class="bi bi-person-badge me-1"></i><span id="m-photographer"></span></div>
+              <div class="col-auto"><span id="m-exif-tags"></span></div>
+            </div>
+          </div>
         </div>
 
-        <!-- Editable fields -->
-        <div class="mb-3">
-          <label class="form-label text-secondary small mb-1">AI Title</label>
-          <input type="text" class="form-control form-control-sm field-edit" id="edit-ai-title" placeholder="ชื่อภาษาไทย รูปแบบ YYYY.MM.DD_หัวข้อ_ชื่อ" />
-        </div>
-
-        <div class="mb-3">
-          <label class="form-label text-secondary small mb-1">Description</label>
-          <textarea class="form-control form-control-sm field-edit" id="edit-ai-desc" rows="4" placeholder="อธิบาย 3-5 ประโยค ว่าใคร ทำอะไร ที่ไหน"></textarea>
-        </div>
-
-        <div class="row g-2 mb-3">
-          <div class="col-6">
+        <!-- ─── Section: Core ──────────────────────── -->
+        <div class="row g-3 mb-3">
+          <div class="col-12">
+            <label class="form-label text-secondary small mb-1">Title</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-ai-title" />
+          </div>
+          <div class="col-12">
+            <label class="form-label text-secondary small mb-1">Description <span class="text-danger">*</span></label>
+            <textarea class="form-control form-control-sm field-edit" id="edit-ai-desc" rows="3"></textarea>
+          </div>
+          <div class="col-md-4">
             <label class="form-label text-secondary small mb-1">Category</label>
             <select class="form-select form-select-sm field-edit" id="edit-ai-cat">
               <option value="">— เลือก —</option>
-              <option>Photo</option>
-              <option>Footage</option>
-              <option>Audio</option>
-              <option>Graphic</option>
-              <option>Deliverable</option>
+              <option>Photo</option><option>Footage</option><option>Audio</option><option>Graphic</option><option>Deliverable</option>
             </select>
           </div>
-          <div class="col-6">
+          <div class="col-md-4">
             <label class="form-label text-secondary small mb-1">Sub-category</label>
             <select class="form-select form-select-sm field-edit" id="edit-ai-subcat">
               <option value="">— เลือก —</option>
-              <option>Portrait</option>
-              <option>Event</option>
-              <option>B-Roll</option>
-              <option>Drone</option>
-              <option>BTS</option>
-              <option>Interview</option>
-              <option>Press Conference</option>
-              <option>Protest</option>
-              <option>Document</option>
-              <option>Product</option>
+              <option>Portrait</option><option>Event</option><option>B-Roll</option><option>Drone</option><option>BTS</option>
+              <option>Interview</option><option>Press Conference</option><option>Protest</option><option>Document</option><option>Product</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Editorial Categories</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-editorial" />
+          </div>
+        </div>
+
+        <!-- ─── Section: People & Place ───────────── -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">People / Speaker</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-persons" placeholder="ชื่อบุคคล คั่นด้วย comma" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Location</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-location" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Event / Occasion</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-event" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label text-secondary small mb-1">Emotion / Mood</label>
+            <select class="form-select form-select-sm field-edit" id="edit-emotion">
+              <option value="">— เลือก —</option>
+              <option>Happy</option><option>Serious</option><option>Tense</option><option>Celebratory</option><option>Neutral</option><option>Sad</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label text-secondary small mb-1">Language</label>
+            <select class="form-select form-select-sm field-edit" id="edit-language">
+              <option value="">— เลือก —</option>
+              <option>Thai</option><option>English</option><option>Other</option>
             </select>
           </div>
         </div>
 
-        <div class="mb-2">
-          <label class="form-label text-secondary small mb-1">Keywords <span class="text-muted">(คั่นด้วย comma)</span></label>
-          <input type="text" class="form-control form-control-sm field-edit" id="edit-ai-keyword" placeholder="คำ1, คำ2, คำ3, คำ4, คำ5" />
-          <div class="mt-1" id="keyword-preview"></div>
+        <!-- ─── Section: Production ───────────────── -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Photographer / Camera Op</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-photographer" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Camera Model</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-camera-model" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Department</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-department" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Project / Series</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-project" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Episode / Segment</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-episode" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Deliverable Type</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-deliverable" />
+          </div>
         </div>
-      </div>
 
+        <!-- ─── Section: Rights & Tags ────────────── -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Right / License</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-right-license" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Credit Line</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-credit-line" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Subject Tags</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-subject-tags" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Visual Attributes</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-visual" />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Technical Tags</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-tech-tags" />
+          </div>
+          <div class="col-12">
+            <label class="form-label text-secondary small mb-1">Keywords / Tags <span class="text-muted">(คั่นด้วย comma)</span></label>
+            <input type="text" class="form-control form-control-sm field-edit" id="edit-ai-keyword" />
+            <div class="mt-1" id="keyword-preview"></div>
+          </div>
+        </div>
+
+      </div>
       <div class="modal-footer justify-content-between">
         <div class="d-flex gap-2">
           <button class="btn btn-outline-warning btn-sm" onclick="resetFromModal()">
@@ -300,6 +382,87 @@
   </div>
 </div>
 
+<!-- ══════════════ Bulk Edit Modal ══════════════ -->
+<div class="modal fade" id="bulkModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Bulk Edit — <span id="bulk-modal-count"></span> รายการ</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>เฉพาะ field ที่กรอกเท่านั้นจะถูกอัพเดท field ที่ว่างจะถูกข้าม</div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Category</label>
+            <select class="form-select form-select-sm field-edit" id="bulk-cat">
+              <option value="">— ไม่เปลี่ยน —</option>
+              <option>Photo</option><option>Footage</option><option>Audio</option><option>Graphic</option><option>Deliverable</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Sub-category</label>
+            <select class="form-select form-select-sm field-edit" id="bulk-subcat">
+              <option value="">— ไม่เปลี่ยน —</option>
+              <option>Portrait</option><option>Event</option><option>B-Roll</option><option>Drone</option><option>BTS</option>
+              <option>Interview</option><option>Press Conference</option><option>Protest</option><option>Document</option><option>Product</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-secondary small mb-1">Editorial Categories</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="bulk-editorial" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Department</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="bulk-department" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Project / Series</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="bulk-project" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Photographer</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="bulk-photographer" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Right / License</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="bulk-rights" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label text-secondary small mb-1">Location</label>
+            <input type="text" class="form-control form-control-sm field-edit" id="bulk-location" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label text-secondary small mb-1">Language</label>
+            <select class="form-select form-select-sm field-edit" id="bulk-language">
+              <option value="">— ไม่เปลี่ยน —</option>
+              <option>Thai</option><option>English</option><option>Other</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label text-secondary small mb-1">Emotion / Mood</label>
+            <select class="form-select form-select-sm field-edit" id="bulk-emotion">
+              <option value="">— ไม่เปลี่ยน —</option>
+              <option>Happy</option><option>Serious</option><option>Tense</option><option>Celebratory</option><option>Neutral</option><option>Sad</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <button class="btn btn-outline-info btn-sm" onclick="bulkPushSelected()">
+          <i class="bi bi-upload me-1"></i>Push ที่เลือกขึ้น Mimir
+        </button>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">ยกเลิก</button>
+          <button class="btn btn-warning btn-sm" onclick="saveBulkEdit()">
+            <i class="bi bi-floppy me-1"></i>บันทึกทั้งหมด
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
   // ── State ──────────────────────────────────────────────────────────────
@@ -309,6 +472,7 @@
   let perPage = 50;
   let modalItemId = null;
   let refreshInterval = null;
+  let selectedIds = new Set();
 
   // ── Init ───────────────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', () => {
@@ -375,24 +539,49 @@
   function renderTable(items) {
     const tbody = document.getElementById('assets-tbody');
     if (!items.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-secondary py-5">No assets found</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-secondary py-5">No assets found</td></tr>`;
       return;
     }
-    tbody.innerHTML = items.map(a => `
+    tbody.innerHTML = items.map(a => {
+      const checked = selectedIds.has(a.item_id) ? 'checked' : '';
+      return `
       <tr>
+        <td><input type="checkbox" class="form-check-input row-check" value="${a.item_id}" ${checked} onchange="toggleRowCheck(this)"></td>
         <td>${a.thumbnail_url
           ? `<img src="${a.thumbnail_url}" class="thumb" onerror="this.style.display='none'" />`
           : `<div class="thumb-placeholder"><i class="bi bi-image"></i></div>`}</td>
         <td class="text-truncate" style="max-width:180px" title="${esc(a.title)}">${esc(a.title) || '<span class="text-muted">—</span>'}</td>
         <td><div class="ai-preview" title="${esc(a.ai_title)}">${esc(a.ai_title) || '<span class="text-muted">—</span>'}</div></td>
         <td><span class="text-muted small">${esc(a.ai_category) || '—'}</span> <span class="text-secondary" style="font-size:.75rem">${esc(a.ai_subcat) || ''}</span></td>
-        <td><span class="text-muted small">${esc(a.item_type) || '—'}</span></td>
         <td><span class="badge ${badgeClass(a.status)}">${a.status}</span></td>
         <td>
           <button class="btn btn-outline-secondary btn-action" onclick="openDetail('${a.item_id}')"><i class="bi bi-eye"></i></button>
           ${a.status === 'error' ? `<button class="btn btn-outline-warning btn-action ms-1" onclick="resetAsset('${a.item_id}')"><i class="bi bi-arrow-counterclockwise"></i></button>` : ''}
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
+  }
+
+  function toggleAllCheck(cb) {
+    document.querySelectorAll('.row-check').forEach(c => {
+      c.checked = cb.checked;
+      if (cb.checked) selectedIds.add(c.value); else selectedIds.delete(c.value);
+    });
+    updateBulkButton();
+  }
+
+  function toggleRowCheck(cb) {
+    if (cb.checked) selectedIds.add(cb.value); else selectedIds.delete(cb.value);
+    updateBulkButton();
+  }
+
+  function updateBulkButton() {
+    const btn = document.getElementById('btn-bulk-edit');
+    const badge = document.getElementById('bulk-count-badge');
+    const n = selectedIds.size;
+    btn.disabled = n === 0;
+    if (n > 0) { badge.textContent = n; badge.style.display = ''; }
+    else badge.style.display = 'none';
   }
 
   function renderPagination(total) {
@@ -437,11 +626,43 @@
        `<span class="badge ${badgeClass(a.status)} ms-1">${a.status}</span>`
       ].filter(Boolean).join(' · ');
 
+    // EXIF display in header
+    document.getElementById('m-camera').textContent = a.exif_camera_model || '';
+    document.getElementById('m-photographer').textContent = a.exif_photographer || '';
+    const exifTags = [
+      a.exif_iso ? `ISO ${a.exif_iso}` : '',
+      a.exif_aperture || '',
+      a.exif_shutter ? `${a.exif_shutter}s` : '',
+      a.exif_focal_length ? `${a.exif_focal_length}mm` : '',
+    ].filter(Boolean).join(' · ');
+    document.getElementById('m-exif-tags').textContent = exifTags;
+
+    // Core fields
     document.getElementById('edit-ai-title').value   = a.ai_title || '';
     document.getElementById('edit-ai-desc').value    = a.ai_description || '';
     document.getElementById('edit-ai-cat').value     = a.ai_category || '';
     document.getElementById('edit-ai-subcat').value  = a.ai_subcat || '';
-    document.getElementById('edit-ai-keyword').value = a.ai_keyword || '';
+    document.getElementById('edit-editorial').value  = a.ai_editorial_categories || '';
+    // People & Place
+    document.getElementById('edit-persons').value    = a.ai_persons || '';
+    document.getElementById('edit-location').value   = a.ai_location || '';
+    document.getElementById('edit-event').value      = a.ai_event_occasion || '';
+    document.getElementById('edit-emotion').value    = a.ai_emotion_mood || '';
+    document.getElementById('edit-language').value   = a.ai_language || '';
+    // Production
+    document.getElementById('edit-photographer').value   = a.exif_photographer || '';
+    document.getElementById('edit-camera-model').value   = a.exif_camera_model || '';
+    document.getElementById('edit-department').value     = a.ai_department || '';
+    document.getElementById('edit-project').value        = a.ai_project_series || '';
+    document.getElementById('edit-episode').value        = a.ai_episode_segment || '';
+    document.getElementById('edit-deliverable').value    = a.ai_deliverable_type || '';
+    // Rights & Tags
+    document.getElementById('edit-right-license').value  = a.ai_right_license || '';
+    document.getElementById('edit-credit-line').value    = a.exif_credit_line || '';
+    document.getElementById('edit-subject-tags').value   = a.ai_subject_tags || '';
+    document.getElementById('edit-visual').value         = a.ai_visual_attributes || '';
+    document.getElementById('edit-tech-tags').value      = a.ai_technical_tags || '';
+    document.getElementById('edit-ai-keyword').value     = a.ai_keyword || '';
     renderKeywordPreview(a.ai_keyword || '');
 
     new bootstrap.Modal(document.getElementById('detailModal')).show();
@@ -455,12 +676,30 @@
 
   async function saveFromModal() {
     if (!modalItemId) return;
+    const g = id => document.getElementById(id).value;
     const payload = {
-      ai_title:       document.getElementById('edit-ai-title').value,
-      ai_description: document.getElementById('edit-ai-desc').value,
-      ai_category:    document.getElementById('edit-ai-cat').value,
-      ai_subcat:      document.getElementById('edit-ai-subcat').value,
-      ai_keyword:     document.getElementById('edit-ai-keyword').value,
+      ai_title:                  g('edit-ai-title'),
+      ai_description:            g('edit-ai-desc'),
+      ai_category:               g('edit-ai-cat'),
+      ai_subcat:                 g('edit-ai-subcat'),
+      ai_editorial_categories:   g('edit-editorial'),
+      ai_persons:                g('edit-persons'),
+      ai_location:               g('edit-location'),
+      ai_event_occasion:         g('edit-event'),
+      ai_emotion_mood:           g('edit-emotion'),
+      ai_language:               g('edit-language'),
+      exif_photographer:         g('edit-photographer'),
+      exif_camera_model:         g('edit-camera-model'),
+      ai_department:             g('edit-department'),
+      ai_project_series:         g('edit-project'),
+      ai_episode_segment:        g('edit-episode'),
+      ai_deliverable_type:       g('edit-deliverable'),
+      ai_right_license:          g('edit-right-license'),
+      exif_credit_line:          g('edit-credit-line'),
+      ai_subject_tags:           g('edit-subject-tags'),
+      ai_visual_attributes:      g('edit-visual'),
+      ai_technical_tags:         g('edit-tech-tags'),
+      ai_keyword:                g('edit-ai-keyword'),
     };
     const r = await fetch(`/api/assets/${modalItemId}`, {
       method: 'PATCH',
@@ -486,6 +725,84 @@
     const r = await fetch(`/api/assets/${modalItemId}/push`, { method: 'POST' });
     const d = await r.json();
     alert(d.ok ? 'Push สำเร็จแล้ว' : `Error: ${d.detail}`);
+  }
+
+  // ── Bulk Edit ──────────────────────────────────────────────────────────
+  function openBulkEdit() {
+    if (selectedIds.size === 0) return;
+    document.getElementById('bulk-modal-count').textContent = selectedIds.size;
+    // Reset all fields
+    ['bulk-cat','bulk-subcat','bulk-editorial','bulk-department','bulk-project',
+     'bulk-photographer','bulk-rights','bulk-location','bulk-language','bulk-emotion'
+    ].forEach(id => { document.getElementById(id).value = ''; });
+    new bootstrap.Modal(document.getElementById('bulkModal')).show();
+  }
+
+  async function saveBulkEdit() {
+    const g = id => document.getElementById(id).value;
+    const fields = {};
+    const map = {
+      'bulk-cat':          'ai_category',
+      'bulk-subcat':       'ai_subcat',
+      'bulk-editorial':    'ai_editorial_categories',
+      'bulk-department':   'ai_department',
+      'bulk-project':      'ai_project_series',
+      'bulk-photographer': 'exif_photographer',
+      'bulk-rights':       'rights',
+      'bulk-location':     'ai_location',
+      'bulk-language':     'ai_language',
+      'bulk-emotion':      'ai_emotion_mood',
+    };
+    Object.entries(map).forEach(([elId, field]) => {
+      const v = g(elId);
+      if (v) fields[field] = v;
+    });
+    if (Object.keys(fields).length === 0) { alert('ไม่มี field ที่กรอก'); return; }
+    const r = await fetch('/api/assets/bulk-edit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_ids: [...selectedIds], fields }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      bootstrap.Modal.getInstance(document.getElementById('bulkModal'))?.hide();
+      alert(`อัพเดทสำเร็จ ${d.updated} รายการ`);
+      loadAssets();
+    } else {
+      alert('Error: ' + d.detail);
+    }
+  }
+
+  async function bulkPushSelected() {
+    if (selectedIds.size === 0) return;
+    bootstrap.Modal.getInstance(document.getElementById('bulkModal'))?.hide();
+    showProgress(`Pushing ${selectedIds.size} assets to Mimir…`);
+    const r = await fetch('/api/assets/bulk-push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_ids: [...selectedIds] }),
+    });
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const d = JSON.parse(line.slice(5).trim());
+        if (d.type === 'done') {
+          appendLog(`✓ Push complete: ${d.ok_total} ok, ${d.errors} errors`);
+          loadStats();
+        } else {
+          setProgress(d.ok_total + d.errors, d.total, `Pushed ${d.ok_total + d.errors} / ${d.total}`);
+          appendLog(`${d.ok ? '✓' : '✗'} ${d.item_id}`);
+        }
+      }
+    }
   }
 
   // ── Actions ────────────────────────────────────────────────────────────
@@ -562,18 +879,34 @@
     const btn = document.getElementById('btn-push-all');
     btn.disabled = true;
     showProgress('Pushing to Mimir…');
-    const es = new EventSource('/api/push-all');
-    es.onmessage = e => {
-      const d = JSON.parse(e.data);
-      if (d.type === 'done') {
-        appendLog(`✓ Push complete: ${d.ok_total} ok, ${d.errors} errors`);
-        es.close(); btn.disabled = false; loadStats();
-      } else {
-        setProgress(d.ok_total + d.errors, d.total, `Pushed ${d.ok_total + d.errors} / ${d.total}`);
-        appendLog(`${d.ok ? '✓' : '✗'} ${d.item_id}`);
+    try {
+      const r = await fetch('/api/push-all', { method: 'POST' });
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          const d = JSON.parse(line.slice(5).trim());
+          if (d.type === 'done') {
+            appendLog(`✓ Push complete: ${d.ok_total} ok, ${d.errors} errors`);
+            loadStats();
+          } else {
+            setProgress(d.ok_total + d.errors, d.total, `Pushed ${d.ok_total + d.errors} / ${d.total}`);
+            appendLog(`${d.ok ? '✓' : '✗'} ${d.item_id}`);
+          }
+        }
       }
-    };
-    es.onerror = () => { appendLog('✗ Stream error'); es.close(); btn.disabled = false; };
+    } catch(e) {
+      appendLog('✗ Stream error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async function resetAsset(itemId) {
