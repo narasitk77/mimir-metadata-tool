@@ -49,10 +49,7 @@ You are a media metadata specialist for THE STANDARD, a Thai news and media comp
 
 
 async def _fetch_exif(client: httpx.AsyncClient, asset: Asset) -> dict:
-    """ดึง EXIF จาก exifTagsUrl หรือ /api/v1/items/{id} แล้วคืน dict ที่ parse แล้ว"""
     exif_url = asset.exif_url
-
-    # ถ้าไม่มี URL ให้ดึงจาก Mimir items API
     if not exif_url:
         r = await client.get(
             f"{settings.MIMIR_BASE_URL}/api/v1/items/{asset.item_id}",
@@ -61,7 +58,6 @@ async def _fetch_exif(client: httpx.AsyncClient, asset: Asset) -> dict:
         )
         if r.status_code == 200:
             exif_url = r.json().get("exifTagsUrl", "")
-            # อัพเดท DB
             db = SessionLocal()
             try:
                 a = db.query(Asset).filter(Asset.item_id == asset.item_id).first()
@@ -70,10 +66,8 @@ async def _fetch_exif(client: httpx.AsyncClient, asset: Asset) -> dict:
                     db.commit()
             finally:
                 db.close()
-
     if not exif_url:
         return {}
-
     try:
         r2 = await client.get(exif_url, timeout=15)
         if r2.status_code == 200:
@@ -84,7 +78,6 @@ async def _fetch_exif(client: httpx.AsyncClient, asset: Asset) -> dict:
 
 
 def _parse_exif(exif: dict) -> dict:
-    """แปลง EXIF JSON เป็น dict ที่ใช้งาน"""
     ifd0  = exif.get("EXIF:IFD0", {})
     exif_ = exif.get("EXIF:ExifIFD", {})
     return {
@@ -99,12 +92,14 @@ def _parse_exif(exif: dict) -> dict:
 
 
 async def _analyze_one(client: httpx.AsyncClient, asset: Asset) -> dict:
-    """Fetch EXIF + thumbnail แล้วส่ง Gemini วิเคราะห์ คืน dict ผลลัพธ์"""
-    # 1. ดึง EXIF
+    import anthropic as _anthropic
+    import os
+
+    # 1. EXIF
     exif_raw  = await _fetch_exif(client, asset)
     exif_data = _parse_exif(exif_raw)
 
-    # 2. ดึง thumbnail (refresh URL จาก Mimir ถ้า expired)
+    # 2. Thumbnail (refresh URL from Mimir if expired)
     img_resp = await client.get(asset.thumbnail_url, timeout=30)
     if img_resp.status_code in (400, 403, 404):
         r = await client.get(
@@ -129,7 +124,7 @@ async def _analyze_one(client: httpx.AsyncClient, asset: Asset) -> dict:
         raise ValueError(f"Cannot fetch thumbnail ({img_resp.status_code})")
     image_b64 = base64.b64encode(img_resp.content).decode()
 
-    # 3. สร้าง prompt
+    # 3. Prompt
     prompt = PROMPT.format(
         title=asset.title or "",
         ingest_path=asset.ingest_path or "",
@@ -138,77 +133,43 @@ async def _analyze_one(client: httpx.AsyncClient, asset: Asset) -> dict:
         exif_camera_model=exif_data.get("camera_model", ""),
     )
 
-    payload = {
-        "contents": [{"parts": [
-            {"inlineData": {"mimeType": "image/jpeg", "data": image_b64}},
-            {"text": prompt},
-        ]}],
-        "generationConfig": {"temperature": 0.2},
-    }
+    # 4. Claude API call (sync in thread to keep async-friendly)
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or settings.ANTHROPIC_API_KEY
+    claude = _anthropic.Anthropic(api_key=api_key)
 
-    # Retry on 503 only (overload) — 503 usually resolves in seconds
-    # 429 is NOT retried here; run_gemini_batch handles it as a rate_limit pause
-    import os
-    _api_key = os.environ.get("GEMINI_API_KEY") or settings.GEMINI_API_KEY
-    logger.warning(f"DEBUG Gemini call: key={_api_key[:20]}... model={settings.GEMINI_MODEL}")
-    for attempt in range(3):
-        resp = await client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GEMINI_MODEL}:generateContent",
-            params={"key": _api_key},
-            json=payload,
-            timeout=60,
+    def _call_claude():
+        return claude.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_b64,
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }],
         )
-        if resp.status_code == 503 and attempt < 2:
-            wait = 15 * (2 ** attempt)  # 15s, 30s
-            logger.warning(f"Gemini 503 overload — retry {attempt+1}/2 in {wait}s")
-            await asyncio.sleep(wait)
-            continue
-        break
-    if resp.status_code != 200:
-        raise ValueError(f"Gemini error {resp.status_code}: {resp.text[:200]}")
 
-    body = resp.json()
-    raw     = body["candidates"][0]["content"]["parts"][0]["text"]
+    resp = await asyncio.get_event_loop().run_in_executor(None, _call_claude)
+
+    raw     = resp.content[0].text
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     result  = json.loads(cleaned)
 
-    # แนบ EXIF และ token usage
     result["_exif"]          = exif_data
-    result["_tokens_input"]  = body.get("usageMetadata", {}).get("promptTokenCount", 0)
-    result["_tokens_output"] = body.get("usageMetadata", {}).get("candidatesTokenCount", 0)
+    result["_tokens_input"]  = resp.usage.input_tokens
+    result["_tokens_output"] = resp.usage.output_tokens
     return result
 
 
-def get_daily_usage() -> dict:
-    db = SessionLocal()
-    try:
-        today_start = datetime.combine(date.today(), datetime.min.time())
-        row = db.query(
-            func.count(Asset.item_id).label("requests"),
-            func.coalesce(func.sum(Asset.tokens_input + Asset.tokens_output), 0).label("tokens"),
-        ).filter(
-            Asset.processed_at >= today_start,
-            Asset.status == "done",
-        ).first()
-        return {"requests": row.requests or 0, "tokens": int(row.tokens or 0)}
-    finally:
-        db.close()
-
-
-def check_rate_limit() -> Optional[str]:
-    usage   = get_daily_usage()
-    warn_rpd = int(settings.FREE_TIER_RPD * settings.FREE_TIER_WARN_PCT)
-    warn_tpd = int(settings.FREE_TIER_TPD * settings.FREE_TIER_WARN_PCT)
-    if usage["requests"] >= warn_rpd:
-        return (f"ใกล้ถึง limit รายวัน: {usage['requests']}/{settings.FREE_TIER_RPD} requests "
-                f"({settings.FREE_TIER_WARN_PCT*100:.0f}%) — หยุดรอ reset เที่ยงคืน UTC")
-    if usage["tokens"] >= warn_tpd:
-        return (f"ใกล้ถึง token limit รายวัน: {usage['tokens']:,}/{settings.FREE_TIER_TPD:,} tokens "
-                f"({settings.FREE_TIER_WARN_PCT*100:.0f}%) — หยุดรอ reset เที่ยงคืน UTC")
-    return None
-
-
-async def run_gemini_batch() -> AsyncGenerator[dict, None]:
+async def run_claude_batch() -> AsyncGenerator[dict, None]:
     db = SessionLocal()
     pending_ids = [a.item_id for a in db.query(Asset).filter(Asset.status == "pending").all()]
     db.close()
@@ -216,17 +177,11 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
     total = len(pending_ids)
     processed = 0
     errors = 0
-    idx = 0  # ใช้ index แทน for-loop เพื่อให้ retry ได้
+    idx = 0
 
     async with httpx.AsyncClient() as client:
         while idx < len(pending_ids):
             item_id = pending_ids[idx]
-
-            limit_msg = check_rate_limit()
-            if limit_msg:
-                yield {"type": "rate_limit", "message": limit_msg,
-                       "processed": processed, "errors": errors, "total": total}
-                return
 
             db = SessionLocal()
             rate_limited = False
@@ -259,7 +214,6 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
                 asset.ai_language            = result.get("language", "")
                 asset.ai_subject_tags        = result.get("subject_tags", "")
                 asset.ai_visual_attributes   = result.get("visual_attributes", "")
-                # EXIF
                 asset.exif_photographer      = exif.get("photographer", "")
                 asset.exif_camera_model      = exif.get("camera_model", "")
                 asset.exif_credit_line       = exif.get("credit_line", "")
@@ -267,7 +221,6 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
                 asset.exif_aperture          = exif.get("aperture", "")
                 asset.exif_shutter           = exif.get("shutter", "")
                 asset.exif_focal_length      = exif.get("focal_length", "")
-                # Token
                 asset.tokens_input           = result.get("_tokens_input", 0)
                 asset.tokens_output          = result.get("_tokens_output", 0)
                 asset.processed_at           = datetime.utcnow()
@@ -281,9 +234,9 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
 
             except Exception as exc:
                 err_str = str(exc)
-                if "429" in err_str:
-                    # รอ 90s แล้ว retry asset เดิม (ไม่เพิ่ม idx)
-                    logger.warning(f"429 RPM — รอ 90s แล้ว retry {item_id[:8]}")
+                # Overloaded → รอ 60s retry
+                if "overloaded" in err_str.lower() or "529" in err_str or "rate" in err_str.lower():
+                    logger.warning(f"Claude rate/overload — รอ 60s retry {item_id[:8]}")
                     try:
                         asset.status = "pending"
                         asset.error_log = ""
@@ -307,11 +260,11 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
             yield {"type": "progress", "processed": processed, "errors": errors, "total": total}
 
             if rate_limited:
-                for remaining in range(90, 0, -10):
+                for remaining in range(60, 0, -10):
                     yield {"type": "progress", "processed": processed, "errors": errors,
-                           "total": total, "current": f"⏳ Rate limit — รอ {remaining}s..."}
+                           "total": total, "current": f"⏳ Overloaded — รอ {remaining}s..."}
                     await asyncio.sleep(10)
             else:
-                await asyncio.sleep(settings.GEMINI_DELAY_MS / 1000)
+                await asyncio.sleep(1)  # Claude ไม่มี RPM ต่ำ delay น้อย
 
     yield {"type": "done", "processed": processed, "errors": errors, "total": total}

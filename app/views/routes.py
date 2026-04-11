@@ -43,6 +43,7 @@ class BulkUpdate(BaseModel):
 
 from app.config import settings
 from app.controllers.gemini_controller import run_gemini_batch
+from app.controllers.claude_controller import run_claude_batch
 from app.controllers.mimir_controller import extract_folder_id, fetch_all_items, push_metadata_to_mimir
 from app.database import get_db
 from app.models.asset import Asset
@@ -60,10 +61,14 @@ _active_folder_ids: List[str] = []
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    provider = settings.AI_PROVIDER.lower()
+    model = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
     return templates.TemplateResponse("index.html", {
         "request": request,
         "mimir_url": settings.MIMIR_BASE_URL,
-        "gemini_model": settings.GEMINI_MODEL,
+        "gemini_model": settings.GEMINI_MODEL,  # kept for compat
+        "ai_provider": provider.title(),
+        "ai_model": model,
     })
 
 
@@ -89,9 +94,17 @@ async def get_stats(db: Session = Depends(get_db)):
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────
 
-# Gemini 2.5 Flash pricing (USD per 1M tokens)
-PRICE_INPUT_PER_M  = 0.15
-PRICE_OUTPUT_PER_M = 0.60
+# Pricing per provider (USD per 1M tokens)
+_PRICING = {
+    "gemini": {"input": 0.15,  "output": 0.60},
+    "claude": {"input": 0.80,  "output": 4.00},  # claude-haiku-4-5
+}
+
+def _get_pricing():
+    p = _PRICING.get(settings.AI_PROVIDER.lower(), _PRICING["gemini"])
+    return p["input"], p["output"]
+
+PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M = _get_pricing()
 
 @router.get("/api/token-stats")
 async def get_token_stats(db: Session = Depends(get_db)):
@@ -300,23 +313,29 @@ async def fetch_stream():
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ── API: Gemini Batch (SSE) ────────────────────────────────────────────────────
+# ── API: AI Batch (SSE) — รองรับ Gemini และ Claude ────────────────────────────
 
 @router.post("/api/batch")
 async def start_batch():
     if _running["batch"]:
         raise HTTPException(status_code=409, detail="Batch already running")
-    if not settings.GEMINI_API_KEY:
+    provider = settings.AI_PROVIDER.lower()
+    if provider == "claude" and not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY not set")
+    if provider == "gemini" and not settings.GEMINI_API_KEY:
         raise HTTPException(status_code=400, detail="GEMINI_API_KEY not set")
     _running["batch"] = True
-    return {"ok": True, "message": "Batch started — connect to /api/batch/stream"}
+    return {"ok": True, "provider": provider, "message": f"Batch started ({provider}) — connect to /api/batch/stream"}
 
 
 @router.get("/api/batch/stream")
 async def batch_stream():
+    provider = settings.AI_PROVIDER.lower()
+
     async def generate():
         try:
-            async for event in run_gemini_batch():
+            batch_fn = run_claude_batch if provider == "claude" else run_gemini_batch
+            async for event in batch_fn():
                 yield f"data: {json.dumps(event)}\n\n"
                 await asyncio.sleep(0)
                 if event.get("type") == "rate_limit":

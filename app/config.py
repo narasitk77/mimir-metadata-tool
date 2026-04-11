@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     FOLDER_ID: str = ""
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+    AI_PROVIDER: str = "claude"  # "gemini" หรือ "claude"
     DATABASE_URL: str = "sqlite:///./data/mimir_assets.db"
     ITEMS_PER_PAGE: int = 100
     GEMINI_DELAY_MS: int = 7000  # 7s = ~8 req/min ต่ำกว่า free tier 10 RPM
