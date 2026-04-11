@@ -109,8 +109,11 @@ PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M = _get_pricing()
 @router.get("/api/token-stats")
 async def get_token_stats(db: Session = Depends(get_db)):
     from sqlalchemy import func
-    from datetime import datetime, date
     from app.controllers.gemini_controller import get_daily_usage
+
+    provider = settings.AI_PROVIDER.lower()
+    price_in, price_out = _get_pricing()
+    model_name = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
 
     row = db.query(
         func.sum(Asset.tokens_input).label("total_input"),
@@ -122,35 +125,48 @@ async def get_token_stats(db: Session = Depends(get_db)):
     total_output = row.total_output or 0
     analyzed     = row.analyzed     or 0
 
-    cost_input  = (total_input  / 1_000_000) * PRICE_INPUT_PER_M
-    cost_output = (total_output / 1_000_000) * PRICE_OUTPUT_PER_M
+    cost_input  = (total_input  / 1_000_000) * price_in
+    cost_output = (total_output / 1_000_000) * price_out
     cost_total  = cost_input + cost_output
 
     avg_input  = round(total_input  / analyzed, 1) if analyzed else 0
     avg_output = round(total_output / analyzed, 1) if analyzed else 0
 
+    # Daily usage (from DB — ใช้ได้กับทั้ง Gemini และ Claude)
     today = get_daily_usage()
-    rpd_pct = round(today["requests"] / settings.FREE_TIER_RPD * 100, 1)
-    tpd_pct = round(today["tokens"]   / settings.FREE_TIER_TPD * 100, 1)
+
+    # Quota limits ตาม provider
+    if provider == "claude":
+        # Claude paid — ไม่มี hard daily limit แต่แสดง usage วันนี้
+        rpd_limit = None   # ไม่มี limit แบบ free tier
+        tpd_limit = None
+        rpd_pct   = 0.0
+        tpd_pct   = 0.0
+    else:
+        rpd_limit = settings.FREE_TIER_RPD
+        tpd_limit = settings.FREE_TIER_TPD
+        rpd_pct   = round(today["requests"] / rpd_limit * 100, 1) if rpd_limit else 0
+        tpd_pct   = round(today["tokens"]   / tpd_limit * 100, 1) if tpd_limit else 0
 
     return {
+        "provider":      provider,
         "analyzed":      analyzed,
         "total_input":   int(total_input),
         "total_output":  int(total_output),
         "total_tokens":  int(total_input + total_output),
         "avg_input":     avg_input,
         "avg_output":    avg_output,
-        "cost_input_usd":  round(cost_input,  6),
-        "cost_output_usd": round(cost_output, 6),
-        "cost_total_usd":  round(cost_total,  6),
-        "cost_total_thb":  round(cost_total * 34, 4),
-        "model":           settings.GEMINI_MODEL,
-        "price_input_per_m":  PRICE_INPUT_PER_M,
-        "price_output_per_m": PRICE_OUTPUT_PER_M,
+        "cost_input_usd":    round(cost_input,  6),
+        "cost_output_usd":   round(cost_output, 6),
+        "cost_total_usd":    round(cost_total,  6),
+        "cost_total_thb":    round(cost_total * 34, 4),
+        "model":             model_name,
+        "price_input_per_m":  price_in,
+        "price_output_per_m": price_out,
         "today_requests": today["requests"],
         "today_tokens":   today["tokens"],
-        "rpd_limit":      settings.FREE_TIER_RPD,
-        "tpd_limit":      settings.FREE_TIER_TPD,
+        "rpd_limit":      rpd_limit,
+        "tpd_limit":      tpd_limit,
         "rpd_pct":        rpd_pct,
         "tpd_pct":        tpd_pct,
         "warn_pct":       int(settings.FREE_TIER_WARN_PCT * 100),

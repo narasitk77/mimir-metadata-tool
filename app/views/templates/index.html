@@ -7,51 +7,87 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
   <style>
-    body { background: #0f1117; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
-    .navbar { background: #1a1d27 !important; border-bottom: 1px solid #2d3148; }
-    .card { background: #1a1d27; border: 1px solid #2d3148; }
-    .card-stat { transition: transform .15s; }
+    /* ── Base ── */
+    *, *::before, *::after { box-sizing: border-box; }
+    body { background: #111; color: #f0f0f0; font-family: 'Segoe UI', sans-serif; font-size: .875rem; }
+
+    /* ── Navbar ── */
+    .navbar { background: #000 !important; border-bottom: 1px solid #333; }
+    .config-badge { font-size: .7rem; background: #1a1a1a; border: 1px solid #333; padding: 2px 10px; border-radius: 99px; color: #999; }
+
+    /* ── Cards — กรอบเท่ากันทุกอัน ── */
+    .card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; }
+    .card-footer { background: #1a1a1a; border-top: 1px solid #333; border-radius: 0 0 8px 8px; }
+
+    /* ── Stat Cards ── */
+    .card-stat { transition: transform .12s; }
     .card-stat:hover { transform: translateY(-2px); }
-    .stat-num { font-size: 2rem; font-weight: 700; }
-    .badge-pending  { background: #374151; color: #9ca3af; }
-    .badge-processing { background: #1e3a5f; color: #60a5fa; }
-    .badge-done     { background: #14532d; color: #4ade80; }
-    .badge-error    { background: #450a0a; color: #f87171; }
-    .table { --bs-table-bg: transparent; --bs-table-color: #e2e8f0; }
-    .table thead th { border-color: #2d3148; color: #94a3b8; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
-    .table tbody td { border-color: #1e2130; vertical-align: middle; font-size: .85rem; }
-    .table tbody tr:hover td { background: #1e2235; }
-    .thumb { width: 60px; height: 40px; object-fit: cover; border-radius: 4px; background: #2d3148; }
-    .thumb-placeholder { width: 60px; height: 40px; border-radius: 4px; background: #2d3148; display:flex; align-items:center; justify-content:center; color:#475569; }
-    .btn-action { font-size: .8rem; padding: .25rem .6rem; }
+    .stat-num { font-size: 2rem; font-weight: 700; letter-spacing: -.02em; }
+    .stat-label { font-size: .72rem; color: #666; text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+
+    /* ── Status Badges ── */
+    .badge-pending    { background: #2a2a2a; color: #888; border: 1px solid #444; }
+    .badge-processing { background: #1a1a2e; color: #99b4ff; border: 1px solid #334; }
+    .badge-done       { background: #0d1f0d; color: #5a5; border: 1px solid #2a4a2a; }
+    .badge-error      { background: #1f0d0d; color: #d55; border: 1px solid #4a2a2a; }
+
+    /* ── Table ── */
+    .table { --bs-table-bg: transparent; --bs-table-color: #e0e0e0; }
+    .table thead th { border-color: #333; color: #666; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; background: #111; }
+    .table tbody td { border-color: #222; vertical-align: middle; font-size: .84rem; }
+    .table tbody tr:hover td { background: #222; }
+
+    /* ── Thumb ── */
+    .thumb { width: 60px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid #333; }
+    .thumb-placeholder { width: 60px; height: 40px; border-radius: 4px; border: 1px solid #333; background: #222; display:flex; align-items:center; justify-content:center; color:#555; }
+
+    /* ── Buttons ── */
+    .btn-action { font-size: .78rem; padding: .22rem .55rem; }
+    .filter-btn.active { background: #fff !important; color: #111 !important; border-color: #fff !important; }
+
+    /* ── Progress ── */
     #progress-section { display: none; }
-    .progress { background: #2d3148; height: 8px; }
-    .log-box { background: #0d1117; border: 1px solid #2d3148; border-radius: 6px; padding: 10px; font-family: monospace; font-size: .78rem; max-height: 140px; overflow-y: auto; color: #94a3b8; }
-    .filter-btn.active { background: #3b82f6 !important; color: #fff !important; border-color: #3b82f6 !important; }
-    .config-badge { font-size: .7rem; background: #1e2235; border: 1px solid #2d3148; padding: 2px 8px; border-radius: 99px; color: #94a3b8; }
-    .ai-preview { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #7dd3fc; }
-    .modal-content { background: #1a1d27; border: 1px solid #2d3148; color: #e2e8f0; }
-    .modal-header { border-bottom: 1px solid #2d3148; }
-    .modal-footer { border-top: 1px solid #2d3148; }
-    textarea.form-control { background: #0f1117; border-color: #2d3148; color: #e2e8f0; }
-    textarea.form-control:focus { background: #0f1117; color: #e2e8f0; border-color: #3b82f6; box-shadow: 0 0 0 .2rem rgba(59,130,246,.25); }
-    .field-edit { background: #0f1117 !important; border-color: #2d3148 !important; color: #e2e8f0 !important; }
-    .field-edit:focus { border-color: #3b82f6 !important; box-shadow: 0 0 0 .2rem rgba(59,130,246,.2) !important; }
-    .field-edit option { background: #1a1d27; }
-    #folder-url-input::placeholder { color: #475569; }
-    #folder-url-input:focus { background: #0f1117; color: #e2e8f0; border-color: #3b82f6; box-shadow: 0 0 0 .2rem rgba(59,130,246,.25); }
-    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #0f1117; } ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    .progress { background: #2a2a2a; border-radius: 99px; }
+    .log-box { background: #0d0d0d; border: 1px solid #333; border-radius: 6px; padding: 10px; font-family: monospace; font-size: .77rem; max-height: 140px; overflow-y: auto; color: #888; }
+
+    /* ── AI Preview ── */
+    .ai-preview { max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #ccc; }
+
+    /* ── Usage bar labels ── */
+    .usage-label { font-size: .69rem; color: #666; }
+
+    /* ── Forms ── */
+    .form-control, .form-select { background: #111 !important; border-color: #333 !important; color: #f0f0f0 !important; border-radius: 6px; }
+    .form-control:focus, .form-select:focus { border-color: #888 !important; box-shadow: 0 0 0 .15rem rgba(255,255,255,.1) !important; }
+    .form-control::placeholder { color: #444 !important; }
+    .form-select option { background: #1a1a1a; }
+    .field-edit { background: #111 !important; border-color: #333 !important; color: #f0f0f0 !important; }
+    .field-edit:focus { border-color: #888 !important; box-shadow: 0 0 0 .15rem rgba(255,255,255,.1) !important; }
+
+    /* ── Modal ── */
+    .modal-content { background: #1a1a1a; border: 1px solid #333; color: #f0f0f0; }
+    .modal-header { border-bottom: 1px solid #333; }
+    .modal-footer { border-top: 1px solid #333; }
+    .btn-close-white { filter: invert(1) grayscale(1); }
+
+    /* ── Section dividers in modal ── */
+    .section-title { font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; color: #555; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px; margin-bottom: 12px; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
   </style>
 </head>
 <body>
 
 <!-- Navbar -->
-<nav class="navbar navbar-expand-lg navbar-dark px-3 py-2">
-  <span class="navbar-brand fw-bold me-3">
-    <i class="bi bi-stars text-primary me-1"></i> Mimir Metadata AI
+<nav class="navbar navbar-expand-lg navbar-dark px-4 py-2">
+  <span class="navbar-brand fw-bold me-3" style="font-size:.95rem;letter-spacing:-.01em">
+    <i class="bi bi-stars me-1"></i>Mimir Metadata AI
   </span>
   <div class="d-flex align-items-center gap-2 ms-auto">
-    <span class="config-badge"><i class="bi bi-cpu me-1"></i>{{ ai_provider }}: {{ ai_model }}</span>
+    <span class="config-badge"><i class="bi bi-cpu me-1"></i>{{ ai_provider }} · {{ ai_model }}</span>
     <a href="{{ mimir_url }}" target="_blank" class="config-badge text-decoration-none">
       <i class="bi bi-box-arrow-up-right me-1"></i>Mimir
     </a>
@@ -61,67 +97,68 @@
 <div class="container-fluid px-4 py-4">
 
   <!-- Stats Row -->
-  <div class="row g-3 mb-4" id="stats-row">
+  <div class="row g-3 mb-3" id="stats-row">
     <div class="col-6 col-md-2">
       <div class="card card-stat p-3 text-center">
-        <div class="stat-num text-white" id="stat-total">—</div>
-        <div class="text-secondary small">Total Assets</div>
+        <div class="stat-num" id="stat-total">—</div>
+        <div class="stat-label">Total</div>
       </div>
     </div>
     <div class="col-6 col-md-2">
       <div class="card card-stat p-3 text-center">
-        <div class="stat-num text-secondary" id="stat-pending">—</div>
-        <div class="text-secondary small">Pending</div>
+        <div class="stat-num" style="color:#888" id="stat-pending">—</div>
+        <div class="stat-label">Pending</div>
       </div>
     </div>
     <div class="col-6 col-md-2">
       <div class="card card-stat p-3 text-center">
-        <div class="stat-num text-success" id="stat-done">—</div>
-        <div class="text-secondary small">Done</div>
+        <div class="stat-num" style="color:#5a5" id="stat-done">—</div>
+        <div class="stat-label">Done</div>
       </div>
     </div>
     <div class="col-6 col-md-2">
       <div class="card card-stat p-3 text-center">
-        <div class="stat-num text-danger" id="stat-error">—</div>
-        <div class="text-secondary small">Errors</div>
+        <div class="stat-num" style="color:#d55" id="stat-error">—</div>
+        <div class="stat-label">Error</div>
       </div>
     </div>
+
+    <!-- Cost card -->
     <div class="col-12 col-md-4">
-      <div class="card card-stat p-3">
+      <div class="card card-stat p-3 h-100">
         <div class="d-flex justify-content-between align-items-start mb-2">
           <div>
-            <div class="text-secondary small mb-1"><i class="bi bi-coin me-1"></i>Token Cost <span class="text-muted" id="token-model" style="font-size:.7rem"></span></div>
+            <div class="usage-label mb-1"><i class="bi bi-coin me-1"></i>ค่าใช้จ่าย · <span id="token-model"></span></div>
             <div class="d-flex align-items-baseline gap-2">
-              <span class="stat-num text-warning" id="stat-cost-thb" style="font-size:1.6rem">—</span>
-              <span class="text-secondary small">THB</span>
-              <span class="text-muted small" id="stat-cost-usd"></span>
+              <span class="stat-num" style="font-size:1.7rem;color:#e0e0e0" id="stat-cost-thb">—</span>
+              <span style="color:#666;font-size:.8rem">THB</span>
+              <span style="color:#555;font-size:.75rem" id="stat-cost-usd"></span>
             </div>
           </div>
-          <div class="text-end text-secondary" style="font-size:.72rem;line-height:1.7">
-            <div>Input: <span id="stat-tokens-in" class="text-light">—</span></div>
-            <div>Output: <span id="stat-tokens-out" class="text-light">—</span></div>
-            <div>Avg/รูป: <span id="stat-tokens-avg" class="text-light">—</span></div>
+          <div style="font-size:.72rem;color:#666;line-height:1.8;text-align:right">
+            <div>In <span id="stat-tokens-in" style="color:#aaa">—</span></div>
+            <div>Out <span id="stat-tokens-out" style="color:#aaa">—</span></div>
+            <div>Avg <span id="stat-tokens-avg" style="color:#aaa">—</span></div>
           </div>
         </div>
-        <!-- Free Tier usage bars -->
-        <div style="font-size:.7rem">
-          <div class="d-flex justify-content-between text-secondary mb-1">
-            <span><i class="bi bi-shield-check me-1"></i>Free Tier วันนี้</span>
-            <span id="tier-reset-hint" class="text-muted"></span>
+        <!-- Usage bars วันนี้ -->
+        <div style="font-size:.69rem">
+          <div class="d-flex justify-content-between mb-1" style="color:#555">
+            <span>วันนี้ <span id="tier-reset-hint" style="color:#444"></span></span>
           </div>
-          <div class="d-flex justify-content-between text-secondary mb-1">
-            <span>Requests <span id="tier-req-count" class="text-light"></span></span>
-            <span id="tier-req-pct"></span>
+          <div class="d-flex justify-content-between mb-1" style="color:#666">
+            <span>Requests <span id="tier-req-count" style="color:#999"></span></span>
+            <span id="tier-req-pct" style="color:#777"></span>
           </div>
-          <div class="progress mb-1" style="height:4px">
-            <div class="progress-bar" id="tier-req-bar" style="width:0%"></div>
+          <div class="progress mb-2" style="height:3px">
+            <div id="tier-req-bar" style="height:3px;border-radius:99px;background:#666;width:0%;transition:width .4s"></div>
           </div>
-          <div class="d-flex justify-content-between text-secondary mb-1">
-            <span>Tokens <span id="tier-tok-count" class="text-light"></span></span>
-            <span id="tier-tok-pct"></span>
+          <div class="d-flex justify-content-between mb-1" style="color:#666">
+            <span>Tokens <span id="tier-tok-count" style="color:#999"></span></span>
+            <span id="tier-tok-pct" style="color:#777"></span>
           </div>
-          <div class="progress" style="height:4px">
-            <div class="progress-bar" id="tier-tok-bar" style="width:0%"></div>
+          <div class="progress" style="height:3px">
+            <div id="tier-tok-bar" style="height:3px;border-radius:99px;background:#666;width:0%;transition:width .4s"></div>
           </div>
         </div>
       </div>
@@ -146,7 +183,7 @@
         <i class="bi bi-cloud-download me-1"></i>Fetch from Mimir
       </button>
       <button class="btn btn-success btn-sm" id="btn-batch" onclick="startBatch()">
-        <i class="bi bi-stars me-1"></i>Run Gemini Batch
+        <i class="bi bi-stars me-1"></i>Run AI Batch
       </button>
       <button class="btn btn-outline-info btn-sm" id="btn-push-all" onclick="pushAll()">
         <i class="bi bi-upload me-1"></i>Push All to Mimir
@@ -230,11 +267,11 @@
       <div class="modal-body">
 
         <!-- Thumbnail + technical meta -->
-        <div class="d-flex gap-3 mb-3 pb-3" style="border-bottom:1px solid #2d3148">
+        <div class="d-flex gap-3 mb-3 pb-3" style="border-bottom:1px solid #2a2a2a">
           <img id="modal-thumb" src="" class="rounded flex-shrink-0" style="width:140px;height:93px;object-fit:cover" />
           <div class="flex-grow-1">
             <div class="text-secondary small mb-1" id="modal-meta"></div>
-            <div class="row g-1 mt-1" style="font-size:.75rem;color:#94a3b8">
+            <div class="row g-1 mt-1" style="font-size:.75rem;color:#777">
               <div class="col-auto"><i class="bi bi-camera me-1"></i><span id="m-camera"></span></div>
               <div class="col-auto"><i class="bi bi-person-badge me-1"></i><span id="m-photographer"></span></div>
               <div class="col-auto"><span id="m-exif-tags"></span></div>
@@ -508,22 +545,34 @@
     document.getElementById('stat-tokens-avg').textContent = d.analyzed
       ? `${(d.avg_input + d.avg_output).toLocaleString()} tok` : '—';
 
-    // Free Tier bars
-    const reqColor = d.rpd_pct >= d.warn_pct ? '#f87171' : d.rpd_pct >= 70 ? '#fbbf24' : '#4ade80';
-    const tokColor = d.tpd_pct >= d.warn_pct ? '#f87171' : d.tpd_pct >= 70 ? '#fbbf24' : '#4ade80';
-    document.getElementById('tier-req-count').textContent = `${d.today_requests}/${d.rpd_limit}`;
-    document.getElementById('tier-req-pct').textContent   = `${d.rpd_pct}%`;
-    document.getElementById('tier-req-bar').style.cssText = `width:${Math.min(d.rpd_pct,100)}%;background:${reqColor}`;
-    document.getElementById('tier-tok-count').textContent = `${d.today_tokens.toLocaleString()}/${(d.tpd_limit/1000).toFixed(0)}K`;
-    document.getElementById('tier-tok-pct').textContent   = `${d.tpd_pct}%`;
-    document.getElementById('tier-tok-bar').style.cssText = `width:${Math.min(d.tpd_pct,100)}%;background:${tokColor}`;
-
-    // แสดงเวลา reset
+    // แสดงเวลา reset (เที่ยงคืน UTC)
     const now = new Date();
     const resetUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()+1));
     const diffH = Math.floor((resetUTC - now) / 3600000);
     const diffM = Math.floor(((resetUTC - now) % 3600000) / 60000);
-    document.getElementById('tier-reset-hint').textContent = `reset ใน ${diffH}ชม. ${diffM}น.`;
+
+    if (d.provider === 'claude') {
+      // Claude — แสดง usage วันนี้ แต่ไม่มี hard limit
+      document.getElementById('tier-reset-hint').textContent = `reset ใน ${diffH}ชม.${diffM}น.`;
+      document.getElementById('tier-req-count').textContent = `${d.today_requests} req`;
+      document.getElementById('tier-req-pct').textContent   = '';
+      document.getElementById('tier-req-bar').style.cssText = 'width:0%';
+      document.getElementById('tier-tok-count').textContent = `${d.today_tokens.toLocaleString()} tokens`;
+      document.getElementById('tier-tok-pct').textContent   = '';
+      document.getElementById('tier-tok-bar').style.cssText = 'width:0%';
+    } else {
+      // Gemini free tier — แสดง % + color warning
+      const barColor = pct => pct >= d.warn_pct ? '#d55' : pct >= 70 ? '#b80' : '#5a5';
+      document.getElementById('tier-reset-hint').textContent = `reset ใน ${diffH}ชม.${diffM}น.`;
+      document.getElementById('tier-req-count').textContent = `${d.today_requests}/${d.rpd_limit}`;
+      document.getElementById('tier-req-pct').textContent   = `${d.rpd_pct}%`;
+      document.getElementById('tier-req-bar').style.cssText =
+        `width:${Math.min(d.rpd_pct,100)}%;background:${barColor(d.rpd_pct)};height:3px;border-radius:99px`;
+      document.getElementById('tier-tok-count').textContent = `${d.today_tokens.toLocaleString()}/${(d.tpd_limit/1000).toFixed(0)}K`;
+      document.getElementById('tier-tok-pct').textContent   = `${d.tpd_pct}%`;
+      document.getElementById('tier-tok-bar').style.cssText =
+        `width:${Math.min(d.tpd_pct,100)}%;background:${barColor(d.tpd_pct)};height:3px;border-radius:99px`;
+    }
   }
 
   // ── Assets Table ───────────────────────────────────────────────────────
