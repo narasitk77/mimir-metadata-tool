@@ -130,14 +130,13 @@
 
   <!-- Folder Input -->
   <div class="card p-3 mb-3">
-    <label class="text-secondary small mb-1"><i class="bi bi-folder2-open me-1"></i>Mimir Folder URL หรือ Folder ID</label>
-    <div class="d-flex gap-2">
-      <input type="text" id="folder-url-input" class="form-control form-control-sm"
-        placeholder="https://apac.mjoll.no/folders/xxxxxxxx-xxxx-... หรือ UUID ตรงๆ"
-        style="background:#0f1117;border-color:#2d3148;color:#e2e8f0;font-family:monospace;font-size:.82rem"
-        value="" />
-      <span id="folder-id-badge" class="align-self-center text-secondary small text-nowrap" style="min-width:fit-content"></span>
+    <div class="d-flex justify-content-between align-items-center mb-1">
+      <label class="text-secondary small mb-0"><i class="bi bi-folder2-open me-1"></i>Mimir Folder URLs <span class="text-muted">(ใส่ได้หลายโฟลเดอร์ — บรรทัดละ 1 URL)</span></label>
+      <span id="folder-count-badge" class="text-secondary small"></span>
     </div>
+    <textarea id="folder-url-input" class="form-control form-control-sm" rows="3"
+      placeholder="https://apac.mjoll.no/folders/xxxxxxxx-xxxx-...&#10;https://apac.mjoll.no/folders/yyyyyyyy-yyyy-...&#10;หรือ UUID ตรงๆ ก็ได้"
+      style="background:#0f1117;border-color:#2d3148;color:#e2e8f0;font-family:monospace;font-size:.82rem;resize:vertical"></textarea>
   </div>
 
   <!-- Action Bar -->
@@ -806,9 +805,23 @@
   }
 
   // ── Actions ────────────────────────────────────────────────────────────
+  // อัพเดท folder count badge เมื่อ textarea เปลี่ยน
+  document.addEventListener('DOMContentLoaded', () => {
+    const ta = document.getElementById('folder-url-input');
+    if (ta) ta.addEventListener('input', updateFolderCount);
+  });
+
+  function updateFolderCount() {
+    const lines = document.getElementById('folder-url-input').value
+      .split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const badge = document.getElementById('folder-count-badge');
+    badge.textContent = lines.length > 0 ? `${lines.length} โฟลเดอร์` : '';
+  }
+
   async function startFetch() {
-    const folderUrl = document.getElementById('folder-url-input').value.trim();
-    if (!folderUrl) { alert('กรุณาระบุ Folder URL หรือ Folder ID ก่อน'); return; }
+    const raw = document.getElementById('folder-url-input').value;
+    const folderUrls = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    if (folderUrls.length === 0) { alert('กรุณาระบุ Folder URL หรือ Folder ID อย่างน้อย 1 บรรทัด'); return; }
 
     const btn = document.getElementById('btn-fetch');
     btn.disabled = true;
@@ -816,24 +829,30 @@
     const r = await fetch('/api/fetch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder_url: folderUrl }),
+      body: JSON.stringify({ folder_urls: folderUrls }),
     });
     if (!r.ok) { alert((await r.json()).detail); btn.disabled = false; return; }
 
-    const { folder_id } = await r.json();
-    document.getElementById('folder-id-badge').textContent = `ID: ${folder_id}`;
-    showProgress('Fetching from Mimir…');
+    const { folder_ids, count } = await r.json();
+    showProgress(`Fetching ${count} folder${count > 1 ? 's' : ''} from Mimir…`);
+
     const es = new EventSource('/api/fetch/stream');
     es.onmessage = e => {
       const d = JSON.parse(e.data);
-      if (d.type === 'progress') {
-        setProgress(d.fetched, d.total, `Fetched ${d.fetched} / ${d.total}`);
-        appendLog(`Fetched ${d.fetched} / ${d.total}`);
+      const folderTag = d.folder_total > 1 ? ` [${d.folder_index}/${d.folder_total}]` : '';
+      if (d.type === 'folder_start') {
+        appendLog(`\n📁 Folder ${d.folder_index}/${d.folder_total}: ${d.folder_id}...`);
+      } else if (d.type === 'progress') {
+        setProgress(d.fetched, d.total, `Folder${folderTag} — Fetched ${d.fetched} / ${d.total}`);
+        appendLog(`${folderTag} ${d.fetched}/${d.total}`);
       } else if (d.type === 'done') {
-        setProgress(d.total, d.total, `Done — ${d.fetched} items fetched`);
-        appendLog(`✓ Fetch complete: ${d.fetched} items`);
-        es.close(); btn.disabled = false;
-        loadStats(); loadAssets();
+        appendLog(`✓ Folder${folderTag} done: ${d.fetched} items`);
+        if (!d.folder_index || d.folder_index === d.folder_total) {
+          // โฟลเดอร์สุดท้ายเสร็จแล้ว
+          setProgress(1, 1, `✓ ดึงครบทุกโฟลเดอร์แล้ว`);
+          es.close(); btn.disabled = false;
+          loadStats(); loadAssets();
+        }
       } else if (d.type === 'error') {
         appendLog(`✗ Error: ${d.message}`);
         es.close(); btn.disabled = false;

@@ -127,12 +127,24 @@ async def _analyze_one(client: httpx.AsyncClient, asset: Asset) -> dict:
         "generationConfig": {"temperature": 0.2},
     }
 
-    resp = await client.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GEMINI_MODEL}:generateContent",
-        params={"key": settings.GEMINI_API_KEY},
-        json=payload,
-        timeout=60,
-    )
+    # Retry on 503 only (overload) — 503 usually resolves in seconds
+    # 429 is NOT retried here; run_gemini_batch handles it as a rate_limit pause
+    import os
+    _api_key = os.environ.get("GEMINI_API_KEY") or settings.GEMINI_API_KEY
+    logger.warning(f"DEBUG Gemini call: key={_api_key[:20]}... model={settings.GEMINI_MODEL}")
+    for attempt in range(3):
+        resp = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GEMINI_MODEL}:generateContent",
+            params={"key": _api_key},
+            json=payload,
+            timeout=60,
+        )
+        if resp.status_code == 503 and attempt < 2:
+            wait = 15 * (2 ** attempt)  # 15s, 30s
+            logger.warning(f"Gemini 503 overload — retry {attempt+1}/2 in {wait}s")
+            await asyncio.sleep(wait)
+            continue
+        break
     if resp.status_code != 200:
         raise ValueError(f"Gemini error {resp.status_code}: {resp.text[:200]}")
 
@@ -185,9 +197,11 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
     total = len(pending_ids)
     processed = 0
     errors = 0
+    idx = 0  # ใช้ index แทน for-loop เพื่อให้ retry ได้
 
     async with httpx.AsyncClient() as client:
-        for item_id in pending_ids:
+        while idx < len(pending_ids):
+            item_id = pending_ids[idx]
 
             limit_msg = check_rate_limit()
             if limit_msg:
@@ -196,9 +210,11 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
                 return
 
             db = SessionLocal()
+            rate_limited = False
             try:
                 asset = db.query(Asset).filter(Asset.item_id == item_id).first()
                 if not asset or asset.status != "pending":
+                    idx += 1
                     continue
 
                 asset.status = "processing"
@@ -241,21 +257,42 @@ async def run_gemini_batch() -> AsyncGenerator[dict, None]:
                 db.commit()
 
                 processed += 1
+                idx += 1
                 logger.info(f"[{processed}/{total}] done: {asset.ai_title}")
 
             except Exception as exc:
-                errors += 1
-                logger.error(f"Error on {item_id}: {exc}")
-                try:
-                    asset.status    = "error"
-                    asset.error_log = str(exc)
-                    db.commit()
-                except Exception:
-                    pass
+                err_str = str(exc)
+                if "429" in err_str:
+                    # รอ 90s แล้ว retry asset เดิม (ไม่เพิ่ม idx)
+                    logger.warning(f"429 RPM — รอ 90s แล้ว retry {item_id[:8]}")
+                    try:
+                        asset.status = "pending"
+                        asset.error_log = ""
+                        db.commit()
+                    except Exception:
+                        pass
+                    rate_limited = True
+                else:
+                    errors += 1
+                    idx += 1
+                    logger.error(f"Error on {item_id}: {exc}")
+                    try:
+                        asset.status    = "error"
+                        asset.error_log = err_str
+                        db.commit()
+                    except Exception:
+                        pass
             finally:
                 db.close()
 
             yield {"type": "progress", "processed": processed, "errors": errors, "total": total}
-            await asyncio.sleep(settings.GEMINI_DELAY_MS / 1000)
+
+            if rate_limited:
+                for remaining in range(90, 0, -10):
+                    yield {"type": "progress", "processed": processed, "errors": errors,
+                           "total": total, "current": f"⏳ Rate limit — รอ {remaining}s..."}
+                    await asyncio.sleep(10)
+            else:
+                await asyncio.sleep(settings.GEMINI_DELAY_MS / 1000)
 
     yield {"type": "done", "processed": processed, "errors": errors, "total": total}

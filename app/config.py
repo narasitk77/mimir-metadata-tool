@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     DATABASE_URL: str = "sqlite:///./data/mimir_assets.db"
     ITEMS_PER_PAGE: int = 100
-    GEMINI_DELAY_MS: int = 4500
+    GEMINI_DELAY_MS: int = 7000  # 7s = ~8 req/min ต่ำกว่า free tier 10 RPM
     BATCH_SIZE: int = 20
 
     # Gemini Free Tier limits (gemini-2.5-flash)

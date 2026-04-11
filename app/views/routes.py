@@ -51,9 +51,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-# In-memory task lock + active folder_id (single-instance tool)
+# In-memory task lock + active folder_ids (multi-folder support)
 _running: dict[str, bool] = {"fetch": False, "batch": False}
-_active_folder_id: str = ""
+_active_folder_ids: List[str] = []
 
 
 # ── Views ──────────────────────────────────────────────────────────────────────
@@ -247,30 +247,50 @@ async def reset_asset(item_id: str, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-# ── API: Fetch from Mimir (SSE) ────────────────────────────────────────────────
+# ── API: Fetch from Mimir (SSE, multi-folder) ─────────────────────────────────
 
 @router.post("/api/fetch")
-async def start_fetch(folder_url: str = Body(..., embed=True)):
-    global _active_folder_id
+async def start_fetch(folder_urls: List[str] = Body(..., embed=True)):
+    global _active_folder_ids
     if _running["fetch"]:
         raise HTTPException(status_code=409, detail="Fetch already running")
     if not settings.MIMIR_TOKEN:
         raise HTTPException(status_code=400, detail="MIMIR_TOKEN not set")
-    try:
-        _active_folder_id = extract_folder_id(folder_url)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if not folder_urls:
+        raise HTTPException(status_code=400, detail="No folder URLs provided")
+
+    ids = []
+    for url in folder_urls:
+        url = url.strip()
+        if not url:
+            continue
+        try:
+            ids.append(extract_folder_id(url))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="No valid folder URLs")
+
+    _active_folder_ids = ids
     _running["fetch"] = True
-    return {"ok": True, "folder_id": _active_folder_id}
+    return {"ok": True, "folder_ids": ids, "count": len(ids)}
 
 
 @router.get("/api/fetch/stream")
 async def fetch_stream():
     async def generate():
+        total_folders = len(_active_folder_ids)
         try:
-            async for event in fetch_all_items(_active_folder_id):
-                yield f"data: {json.dumps(event)}\n\n"
-                await asyncio.sleep(0)
+            for i, folder_id in enumerate(_active_folder_ids):
+                yield f"data: {json.dumps({'type': 'folder_start', 'folder_id': folder_id, 'folder_index': i+1, 'folder_total': total_folders})}\n\n"
+                async for event in fetch_all_items(folder_id):
+                    # แนบข้อมูล folder เข้าไปใน event
+                    event["folder_index"] = i + 1
+                    event["folder_total"] = total_folders
+                    event["folder_id"] = folder_id[:8]
+                    yield f"data: {json.dumps(event)}\n\n"
+                    await asyncio.sleep(0)
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:
