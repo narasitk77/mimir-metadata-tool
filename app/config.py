@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     FREE_TIER_TPD: int = 1_000_000  # tokens per day
     FREE_TIER_WARN_PCT: float = 0.9 # หยุดที่ 90% ของ limit
 
+    # Sub-path when running behind a reverse proxy (e.g. "/ai-tool" — no trailing slash)
+    APP_ROOT_PATH: str = ""
+
     class Config:
         env_file = ".env"
 

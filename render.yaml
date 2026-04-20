@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: mimir-metadata-tool
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: MIMIR_BASE_URL
+        value: https://apac.mjoll.no
+      - key: MIMIR_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-haiku-4-5-20251001
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_DELAY_MS
+        value: "35000"
+      - key: ITEMS_PER_PAGE
+        value: "100"
+      - key: BATCH_SIZE
+        value: "20"
+      - key: DATABASE_URL
+        value: sqlite:////app/data/mimir_assets.db

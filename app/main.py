@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from app.database import Base, engine, run_migrations
+from app.models.person import Person  # noqa: F401 — registers Person with Base
 from app.views.routes import router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")

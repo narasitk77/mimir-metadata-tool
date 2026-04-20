@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mimir Metadata AI Tool</title>
+  <script>const _ROOT = "{{ root_path | default('') }}";</script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
   <style>
@@ -37,9 +38,22 @@
     .table tbody td { border-color: #222; vertical-align: middle; font-size: .84rem; }
     .table tbody tr:hover td { background: #222; }
 
-    /* ── Thumb ── */
-    .thumb { width: 60px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid #333; }
-    .thumb-placeholder { width: 60px; height: 40px; border-radius: 4px; border: 1px solid #333; background: #222; display:flex; align-items:center; justify-content:center; color:#555; }
+    /* ── Thumb — size controlled by data-thumb-size on <body> ── */
+    .thumb { object-fit: cover; border-radius: 4px; border: 1px solid #333; transition: width .15s, height .15s; }
+    .thumb-placeholder { border-radius: 4px; border: 1px solid #333; background: #222; display:flex; align-items:center; justify-content:center; color:#555; transition: width .15s, height .15s; }
+    body[data-thumb-size="s"] .thumb, body[data-thumb-size="s"] .thumb-placeholder { width:60px; height:40px; }
+    body[data-thumb-size="m"] .thumb, body[data-thumb-size="m"] .thumb-placeholder { width:100px; height:67px; }
+    body[data-thumb-size="l"] .thumb, body[data-thumb-size="l"] .thumb-placeholder { width:150px; height:100px; }
+    body:not([data-thumb-size]) .thumb, body:not([data-thumb-size]) .thumb-placeholder { width:60px; height:40px; }
+    /* ── Video thumb wrapper ── */
+    .thumb-wrap { position:relative; display:inline-block; line-height:0; }
+    .thumb-play { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+                  background:rgba(0,0,0,.35); border-radius:4px; cursor:pointer; opacity:0; transition:opacity .15s; }
+    .thumb-wrap:hover .thumb-play { opacity:1; }
+    .thumb-play i { font-size:1.4rem; color:#fff; text-shadow:0 0 6px #000; pointer-events:none; }
+    /* ── Title columns — wrap to 2 lines, smaller font ── */
+    .title-cell { font-size:.79rem; line-height:1.35; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; max-width:180px; white-space:normal; }
+    .ai-title-cell { font-size:.79rem; line-height:1.35; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; max-width:220px; white-space:normal; color:#ccc; }
 
     /* ── Buttons ── */
     .btn-action { font-size: .78rem; padding: .22rem .55rem; }
@@ -47,9 +61,16 @@
 
     /* ── Progress ── */
     #progress-section { display: none; }
-    .progress { background: #2a2a2a; border-radius: 99px; }
-    .log-box { background: #0d0d0d; border: 1px solid #333; border-radius: 6px; padding: 10px; font-family: monospace; font-size: .77rem; max-height: 140px; overflow-y: auto; color: #888; }
+    .progress { background: #1a1a1a; border-radius: 99px; box-shadow: inset 0 1px 4px #000; }
+    .progress-bar { border-radius: 99px; transition: width .4s ease; font-size: .72rem; font-weight: 600; }
+    #progress-stats { font-size: .78rem; }
+    .log-box { background: #0d0d0d; border: 1px solid #333; border-radius: 6px; padding: 10px; font-family: monospace; font-size: .77rem; max-height: 120px; overflow-y: auto; color: #888; }
+    /* Toast */
+    #batch-toast { z-index: 1100; }
+    #batch-toast .toast { min-width: 300px; }
 
+    /* ── News items ── */
+    .news-item:hover { background: #1e2a2e !important; border-color: #0dcaf0 !important; }
     /* ── AI Preview ── */
     .ai-preview { max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #ccc; }
 
@@ -77,6 +98,74 @@
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: #111; }
     ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+    /* ── Detail modal — large image ── */
+    #modal-img-wrap {
+      position: relative; width: 100%; background: #0a0a0a;
+      border-radius: 8px; overflow: hidden; margin-bottom: 12px;
+      min-height: 80px; max-height: 480px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #modal-thumb {
+      max-width: 100%; max-height: 480px; width: auto; height: auto;
+      display: block; border-radius: 6px;
+    }
+    #modal-play-btn {
+      position: absolute; inset: 0;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,.35); border-radius: 8px; cursor: pointer;
+    }
+    #modal-play-btn i { font-size: 3.5rem; color: #fff; text-shadow: 0 0 20px #000; }
+
+    /* ── Report modal ── */
+    .report-stat-card { background: #111; border: 1px solid #2a2a2a; border-radius: 8px; padding: 14px 18px; }
+    .report-stat-num  { font-size: 1.6rem; font-weight: 700; letter-spacing: -.02em; }
+    .report-stat-lbl  { font-size: .68rem; color: #555; text-transform: uppercase; letter-spacing: .07em; margin-top: 2px; }
+    .report-folder-row:hover { background: #1e1e1e !important; }
+    .report-day-bar { height: 6px; border-radius: 3px; background: #3a8a3a; min-width: 2px; }
+
+    /* ── Sticky toolbar ── */
+    #toolbar-bar { position: sticky; top: 0; z-index: 200; background: #111; padding-top: 8px; padding-bottom: 4px; margin-top: -4px; }
+
+    /* ── Help Drawer ── */
+    #help-drawer {
+      position: fixed; top: 0; right: 0; bottom: 0;
+      width: 400px; max-width: 92vw;
+      background: #161616; border-left: 1px solid #2a2a2a;
+      z-index: 1050; overflow-y: auto;
+      transform: translateX(100%);
+      transition: transform .28s cubic-bezier(.4,0,.2,1);
+      padding: 0;
+    }
+    #help-drawer.open { transform: translateX(0); }
+    #help-overlay {
+      position: fixed; inset: 0; z-index: 1049;
+      background: transparent; pointer-events: none; transition: background .28s;
+    }
+    #help-overlay.open { background: rgba(0,0,0,.35); pointer-events: auto; }
+    .help-section { padding: 0 20px 20px; }
+    .help-section h6 { font-size: .72rem; text-transform: uppercase; letter-spacing: .1em;
+                       color: #555; border-bottom: 1px solid #222; padding-bottom: 6px; margin-bottom: 12px; }
+    .help-step { display: flex; gap: 10px; margin-bottom: 12px; }
+    .help-step-num { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+                     background: #2a2a2a; border: 1px solid #444;
+                     display: flex; align-items: center; justify-content: center;
+                     font-size: .7rem; font-weight: 700; color: #aaa; }
+    .help-step-body { font-size: .82rem; color: #ccc; line-height: 1.55; }
+    .help-step-body strong { color: #e8e8e8; }
+    .help-tip { background: #1a1f1a; border: 1px solid #2a3a2a; border-radius: 6px;
+                padding: 8px 12px; font-size: .8rem; color: #8fb88f; margin-bottom: 8px; }
+    .help-tip i { color: #5a9a5a; }
+    .help-warn { background: #1f1a10; border: 1px solid #3a2a10; border-radius: 6px;
+                 padding: 8px 12px; font-size: .8rem; color: #b8956f; margin-bottom: 8px; }
+    .help-kbd { display: inline-block; background: #222; border: 1px solid #444;
+                border-radius: 3px; padding: 1px 6px; font-family: monospace; font-size: .75rem; color: #ccc; }
+
+    /* ── Album pills ── */
+    .album-pill { font-size: .78rem; border-color: #333; color: #888; max-width: 220px; }
+    .album-pill:hover { border-color: #666; color: #ccc; }
+    .album-pill.active { background: #fff !important; color: #111 !important; border-color: #fff !important; }
+    .album-pill .pill-label { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
   </style>
 </head>
 <body>
@@ -91,46 +180,213 @@
     <a href="{{ mimir_url }}" target="_blank" class="config-badge text-decoration-none">
       <i class="bi bi-box-arrow-up-right me-1"></i>Mimir
     </a>
+    <button class="btn btn-sm btn-outline-secondary" onclick="openPeopleModal()" title="คลังบุคคล" style="padding:.2rem .6rem;font-size:.8rem">
+      <i class="bi bi-people me-1"></i>คลังบุคคล
+    </button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="toggleHelp()" title="คู่มือการใช้งาน" style="padding:.2rem .6rem;font-size:.8rem">
+      <i class="bi bi-question-circle me-1"></i>คู่มือ
+    </button>
   </div>
 </nav>
+
+<!-- Help Overlay (click-away) -->
+<div id="help-overlay" onclick="closeHelp()"></div>
+
+<!-- Help Drawer -->
+<div id="help-drawer">
+  <div style="position:sticky;top:0;background:#161616;border-bottom:1px solid #222;padding:14px 20px;z-index:1;display:flex;justify-content:space-between;align-items:center">
+    <span style="font-weight:600;font-size:.95rem"><i class="bi bi-book me-2" style="color:#888"></i>คู่มือการใช้งาน</span>
+    <button class="btn btn-sm btn-outline-secondary" onclick="closeHelp()" style="padding:.15rem .5rem;font-size:.8rem"><i class="bi bi-x-lg"></i></button>
+  </div>
+
+  <!-- ── Quick Start ── -->
+  <div class="help-section pt-3">
+    <h6><i class="bi bi-lightning-charge me-1"></i>ขั้นตอนการใช้งานหลัก</h6>
+
+    <div class="help-step">
+      <div class="help-step-num">1</div>
+      <div class="help-step-body">
+        <strong>ใส่ Folder URL จาก Mimir</strong><br>
+        วาง URL ของโฟลเดอร์รูปภาพจาก Mimir (เช่น <span class="help-kbd">https://apac.mjoll.no/folders/xxx</span>) ลงในช่องด้านบน รองรับได้ถึง 5 โฟลเดอร์พร้อมกัน
+      </div>
+    </div>
+
+    <div class="help-step">
+      <div class="help-step-num">2</div>
+      <div class="help-step-body">
+        <strong>เพิ่ม Context (สำคัญมาก)</strong><br>
+        ช่องขวาของแต่ละ URL — ระบุข้อมูลที่รู้แล้ว เช่น ชื่อบุคคล สถานที่ งาน<br>
+        <span style="color:#888;font-size:.77rem">ตัวอย่าง: <em>ไอซ์ รัชนก อิงคุลานนท์ | งานเลือกตั้งชลบุรี เขต 1 | ถนนสุขุมวิท</em></span>
+      </div>
+    </div>
+
+    <div class="help-step">
+      <div class="help-step-num">3</div>
+      <div class="help-step-body">
+        <strong>Fetch from Mimir</strong><br>
+        กดเพื่อดึงรายการรูปภาพทั้งหมดจากโฟลเดอร์เข้า local DB (ไม่ได้ดาวน์โหลดไฟล์จริง)
+      </div>
+    </div>
+
+    <div class="help-step">
+      <div class="help-step-num">4</div>
+      <div class="help-step-body">
+        <strong>Run AI Batch</strong><br>
+        AI วิเคราะห์ภาพทีละรูปอัตโนมัติ — ดู progress bar ด้านล่าง สามารถกด <strong>ยกเลิก</strong> ได้ตลอดเวลา (จะหยุดหลังภาพปัจจุบันเสร็จ)
+      </div>
+    </div>
+
+    <div class="help-step">
+      <div class="help-step-num">5</div>
+      <div class="help-step-body">
+        <strong>ตรวจสอบและแก้ไข</strong><br>
+        กดปุ่ม <i class="bi bi-eye"></i> เพื่อเปิด Edit Modal ดู/แก้ไข metadata แต่ละรูป
+      </div>
+    </div>
+
+    <div class="help-step">
+      <div class="help-step-num">6</div>
+      <div class="help-step-body">
+        <strong>Push to Mimir</strong><br>
+        กด <strong>Push All to Mimir</strong> หรือ Push ทีละรูปจาก Edit Modal เพื่ออัปโหลด metadata กลับขึ้น Mimir
+      </div>
+    </div>
+  </div>
+
+  <hr style="border-color:#222;margin:0">
+
+  <!-- ── Context ── -->
+  <div class="help-section pt-3">
+    <h6><i class="bi bi-chat-text me-1"></i>Context — กุญแจสู่ความแม่นยำ</h6>
+    <p style="font-size:.82rem;color:#aaa;line-height:1.6">AI วิเคราะห์จากภาพอย่างเดียวอาจผิดพลาดได้ โดยเฉพาะชื่อบุคคลและสถานที่ การใส่ Context ที่ถูกต้องช่วยให้ผลลัพธ์แม่นยำขึ้นมาก</p>
+
+    <div class="help-tip"><i class="bi bi-check2-circle me-1"></i><strong>Context ระดับโฟลเดอร์</strong> — ใส่ในช่องขวาของ Folder URL ก่อน Fetch ใช้ได้กับทุกภาพในโฟลเดอร์นั้น</div>
+    <div class="help-tip"><i class="bi bi-check2-circle me-1"></i><strong>Context ระดับภาพ</strong> — เปิด Edit Modal → ช่อง "Re-analyze Context" → กด Re-analyze ข้อมูลนี้จะถูกจำไว้สำหรับภาพนั้นตลอด</div>
+    <div class="help-tip"><i class="bi bi-newspaper me-1"></i><strong>ค้นข่าวอัตโนมัติ</strong> — กดปุ่ม "ค้นข่าว" ใน Edit Modal เพื่อให้ AI ค้นข่าวที่เกี่ยวข้องมาใช้ประกอบ</div>
+    <div class="help-warn"><i class="bi bi-exclamation-triangle me-1"></i><strong>Cross-asset context</strong> — เมื่อ batch รัน ภาพที่ 2 เป็นต้นไปในงานเดียวกันจะได้รับชื่อบุคคล/สถานที่ที่ AI ระบุได้จากภาพก่อนหน้า โดยอัตโนมัติ</div>
+  </div>
+
+  <hr style="border-color:#222;margin:0">
+
+  <!-- ── Buttons ── -->
+  <div class="help-section pt-3">
+    <h6><i class="bi bi-grid-1x2 me-1"></i>ปุ่มและฟังก์ชัน</h6>
+    <table style="width:100%;font-size:.8rem;color:#bbb;border-collapse:collapse">
+      <tr style="border-bottom:1px solid #1e1e1e">
+        <td style="padding:6px 8px 6px 0;white-space:nowrap;color:#e0e0e0"><i class="bi bi-cloud-download me-1 text-primary"></i>Fetch from Mimir</td>
+        <td style="padding:6px 0">ดึงรายการรูปภาพจาก URL ที่ระบุ</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e1e1e">
+        <td style="padding:6px 8px 6px 0;white-space:nowrap;color:#e0e0e0"><i class="bi bi-stars me-1 text-success"></i>Run AI Batch</td>
+        <td style="padding:6px 0">วิเคราะห์ภาพ pending ทั้งหมดด้วย AI</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e1e1e">
+        <td style="padding:6px 8px 6px 0;white-space:nowrap;color:#e0e0e0"><i class="bi bi-upload me-1 text-info"></i>Push All</td>
+        <td style="padding:6px 0">อัปโหลด metadata ทุก "done" ขึ้น Mimir</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e1e1e">
+        <td style="padding:6px 8px 6px 0;white-space:nowrap;color:#e0e0e0"><i class="bi bi-collection me-1 text-info"></i>Push by Album</td>
+        <td style="padding:6px 0">Push เฉพาะ album/folder ที่เลือก</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e1e1e">
+        <td style="padding:6px 8px 6px 0;white-space:nowrap;color:#e0e0e0"><i class="bi bi-pencil-square me-1 text-warning"></i>Bulk Edit</td>
+        <td style="padding:6px 0">เลือกหลายรูป (checkbox) แล้วแก้ field พร้อมกัน</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e1e1e">
+        <td style="padding:6px 8px 6px 0;white-space:nowrap;color:#e0e0e0"><i class="bi bi-arrow-counterclockwise me-1 text-warning"></i>Reset to Pending</td>
+        <td style="padding:6px 0">รีเซตภาพกลับเป็น pending เพื่อ re-analyze</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e1e1e">
+        <td style="padding:6px 8px 6px 0;white-space:nowrap;color:#e0e0e0"><i class="bi bi-images me-1"></i>Backfill Proxy</td>
+        <td style="padding:6px 0">ดึง proxy image URL สำหรับภาพที่ยังไม่มี</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 8px 6px 0;white-space:nowrap;color:#e0e0e0"><i class="bi bi-trash3 me-1 text-danger"></i>Clear DB</td>
+        <td style="padding:6px 0">ลบ asset ทั้งหมดออกจาก local DB</td>
+      </tr>
+    </table>
+  </div>
+
+  <hr style="border-color:#222;margin:0">
+
+  <!-- ── Edit Modal ── -->
+  <div class="help-section pt-3">
+    <h6><i class="bi bi-window me-1"></i>Edit Modal — การแก้ไข metadata</h6>
+    <p style="font-size:.82rem;color:#aaa;line-height:1.6">กดปุ่ม <i class="bi bi-eye"></i> ในตาราง เพื่อเปิด modal สำหรับดูและแก้ไขข้อมูลทุก field</p>
+    <ul style="font-size:.81rem;color:#bbb;padding-left:18px;line-height:1.8">
+      <li><strong>Title</strong> — รูปแบบ <span class="help-kbd">YYYY.MM.DD_หัวข้อ_ชื่อบุคคล</span></li>
+      <li><strong>Description</strong> — คำบรรยายสไตล์สำนักข่าว AP/Reuters</li>
+      <li><strong>People / Speaker</strong> — ชื่อบุคคลในภาพ คั่นด้วย comma</li>
+      <li><strong>Emotion / Mood</strong> — อารมณ์ภาพ เช่น Happy, Serious, Celebratory</li>
+      <li><strong>Re-analyze Context</strong> — context เฉพาะภาพนี้ ถูกจำไว้แม้จะ re-analyze ซ้ำ</li>
+    </ul>
+  </div>
+
+  <hr style="border-color:#222;margin:0">
+
+  <!-- ── Status ── -->
+  <div class="help-section pt-3">
+    <h6><i class="bi bi-circle-fill me-1"></i>สถานะภาพ</h6>
+    <div style="font-size:.82rem;line-height:2">
+      <span class="badge badge-pending me-2">pending</span> รอการวิเคราะห์<br>
+      <span class="badge badge-processing me-2">processing</span> กำลังวิเคราะห์อยู่<br>
+      <span class="badge badge-done me-2">done</span> วิเคราะห์แล้ว พร้อม Push<br>
+      <span class="badge badge-error me-2">error</span> เกิดข้อผิดพลาด — กด <i class="bi bi-arrow-counterclockwise"></i> เพื่อ retry
+    </div>
+  </div>
+
+  <hr style="border-color:#222;margin:0">
+
+  <!-- ── Tips ── -->
+  <div class="help-section pt-3">
+    <h6><i class="bi bi-lightbulb me-1"></i>เคล็ดลับ</h6>
+    <div class="help-tip"><i class="bi bi-person-badge me-1"></i>ชื่อบุคคลสำคัญที่สุด — ถ้า AI ไม่รู้จักใบหน้า ต้องใส่ชื่อใน context เสมอ</div>
+    <div class="help-tip"><i class="bi bi-collection me-1"></i>ใช้ Album filter กรองดูแค่งานที่สนใจ กด Run AI Batch เลือก album เพื่อประหยัด token</div>
+    <div class="help-tip"><i class="bi bi-shift me-1"></i>กด <span class="help-kbd">Shift+Click</span> checkbox เพื่อเลือกหลายรูปต่อเนื่อง</div>
+    <div class="help-warn"><i class="bi bi-coin me-1"></i>ดู cost ที่การ์ดขวาสุด — Claude Haiku ถูกกว่า Gemini Flash สำหรับงาน batch ขนาดใหญ่</div>
+    <div class="help-warn"><i class="bi bi-clock me-1"></i>Gemini Free Tier จำกัด 10 req/min — app หน่วงอัตโนมัติ ไม่ต้องกังวล</div>
+  </div>
+
+  <div style="height:30px"></div>
+</div>
 
 <div class="container-fluid px-4 py-4">
 
   <!-- Stats Row -->
   <div class="row g-3 mb-3" id="stats-row">
-    <div class="col-6 col-md-2">
-      <div class="card card-stat p-3 text-center">
+    <div class="col-6 col-md">
+      <div class="card card-stat p-3 text-center h-100">
         <div class="stat-num" id="stat-total">—</div>
         <div class="stat-label">Total</div>
       </div>
     </div>
-    <div class="col-6 col-md-2">
-      <div class="card card-stat p-3 text-center">
+    <div class="col-6 col-md">
+      <div class="card card-stat p-3 text-center h-100">
         <div class="stat-num" style="color:#888" id="stat-pending">—</div>
         <div class="stat-label">Pending</div>
       </div>
     </div>
-    <div class="col-6 col-md-2">
-      <div class="card card-stat p-3 text-center">
-        <div class="stat-num" style="color:#5a5" id="stat-done">—</div>
+    <div class="col-6 col-md">
+      <div class="card card-stat p-3 text-center h-100">
+        <div class="stat-num" style="color:#5a5" id="card-stat-done">—</div>
         <div class="stat-label">Done</div>
       </div>
     </div>
-    <div class="col-6 col-md-2">
-      <div class="card card-stat p-3 text-center">
+    <div class="col-6 col-md">
+      <div class="card card-stat p-3 text-center h-100">
         <div class="stat-num" style="color:#d55" id="stat-error">—</div>
         <div class="stat-label">Error</div>
       </div>
     </div>
 
     <!-- Cost card -->
-    <div class="col-12 col-md-4">
+    <div class="col-12 col-md">
       <div class="card card-stat p-3 h-100">
         <div class="d-flex justify-content-between align-items-start mb-2">
           <div>
             <div class="usage-label mb-1"><i class="bi bi-coin me-1"></i>ค่าใช้จ่าย · <span id="token-model"></span></div>
             <div class="d-flex align-items-baseline gap-2">
-              <span class="stat-num" style="font-size:1.7rem;color:#e0e0e0" id="stat-cost-thb">—</span>
+              <span class="stat-num" style="color:#e0e0e0" id="stat-cost-thb">—</span>
               <span style="color:#666;font-size:.8rem">THB</span>
               <span style="color:#555;font-size:.75rem" id="stat-cost-usd"></span>
             </div>
@@ -167,30 +423,57 @@
 
   <!-- Folder Input -->
   <div class="card p-3 mb-3">
-    <div class="d-flex justify-content-between align-items-center mb-1">
-      <label class="text-secondary small mb-0"><i class="bi bi-folder2-open me-1"></i>Mimir Folder URLs <span class="text-muted">(ใส่ได้หลายโฟลเดอร์ — บรรทัดละ 1 URL)</span></label>
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <label class="text-secondary small mb-0"><i class="bi bi-folder2-open me-1"></i>Mimir Folder URLs</label>
       <span id="folder-count-badge" class="text-secondary small"></span>
     </div>
-    <textarea id="folder-url-input" class="form-control form-control-sm" rows="3"
-      placeholder="https://apac.mjoll.no/folders/xxxxxxxx-xxxx-...&#10;https://apac.mjoll.no/folders/yyyyyyyy-yyyy-...&#10;หรือ UUID ตรงๆ ก็ได้"
-      style="background:#0f1117;border-color:#2d3148;color:#e2e8f0;font-family:monospace;font-size:.82rem;resize:vertical"></textarea>
+    <div class="row g-0 mb-1">
+      <div class="col-1"></div>
+      <div class="col-5 ps-2"><span class="text-secondary" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">Folder URL</span></div>
+      <div class="col-6 ps-3"><span class="text-secondary" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">Context (ระบุชื่อบุคคล สถานที่ หรืองาน เพื่อให้ AI แม่นยำ)</span></div>
+    </div>
+    <div id="folder-url-grid">
+      {% for n in range(1, 6) %}
+      <div class="row g-2 mb-1 align-items-center">
+        <div class="col-1 text-secondary text-end" style="font-size:.72rem">{{ n }}</div>
+        <div class="col-5"><input type="url" class="form-control form-control-sm folder-url-input" placeholder="https://apac.mjoll.no/folders/..." /></div>
+        <div class="col-6"><input type="text" class="form-control form-control-sm folder-ctx-input" placeholder="เช่น งานเปิดตัว iPhone 17 | ณัฐชา ทองแดง | The Standard Space" /></div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
 
-  <!-- Action Bar -->
-  <div class="card p-3 mb-3">
+  <!-- Action Bar (sticky) -->
+  <div id="toolbar-bar" class="mb-3">
+  <div class="card p-3">
     <div class="d-flex flex-wrap gap-2 align-items-center">
       <button class="btn btn-primary btn-sm" id="btn-fetch" onclick="startFetch()">
         <i class="bi bi-cloud-download me-1"></i>Fetch from Mimir
       </button>
-      <button class="btn btn-success btn-sm" id="btn-batch" onclick="startBatch()">
+      <button class="btn btn-success btn-sm" id="btn-batch" onclick="openBatchAlbumModal()">
         <i class="bi bi-stars me-1"></i>Run AI Batch
+      </button>
+      <button class="btn btn-danger btn-sm" id="btn-stop-batch" onclick="cancelBatch()" style="display:none">
+        <i class="bi bi-stop-circle-fill me-1"></i>Stop
       </button>
       <button class="btn btn-outline-info btn-sm" id="btn-push-all" onclick="pushAll()">
         <i class="bi bi-upload me-1"></i>Push All to Mimir
       </button>
+      <button class="btn btn-outline-info btn-sm" id="btn-push-album" onclick="openPushAlbumModal()">
+        <i class="bi bi-collection me-1"></i>Push by Album
+      </button>
       <button class="btn btn-outline-warning btn-sm" id="btn-bulk-edit" onclick="openBulkEdit()" disabled>
         <i class="bi bi-pencil-square me-1"></i>Bulk Edit <span id="bulk-count-badge" class="badge bg-warning text-dark ms-1" style="display:none"></span>
       </button>
+      <div class="dropdown d-inline-block">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown">
+          <i class="bi bi-download me-1"></i>Export CSV
+        </button>
+        <ul class="dropdown-menu dropdown-menu-dark">
+          <li><a class="dropdown-item" href="#" onclick="exportCsv('done')"><i class="bi bi-check2-circle me-2 text-success"></i>Done เท่านั้น</a></li>
+          <li><a class="dropdown-item" href="#" onclick="exportCsv('all')"><i class="bi bi-grid me-2"></i>ทั้งหมด</a></li>
+        </ul>
+      </div>
       <div class="vr mx-1 d-none d-md-block"></div>
       <div class="btn-group btn-group-sm" role="group" id="filter-group">
         <button type="button" class="btn btn-outline-secondary filter-btn active" data-filter="all" onclick="setFilter(this)">All</button>
@@ -198,24 +481,76 @@
         <button type="button" class="btn btn-outline-secondary filter-btn" data-filter="done" onclick="setFilter(this)">Done</button>
         <button type="button" class="btn btn-outline-secondary filter-btn" data-filter="error" onclick="setFilter(this)">Error</button>
       </div>
-      <div class="ms-auto">
+      <div class="ms-auto d-flex gap-2 align-items-center">
+        <!-- Thumbnail size toggle -->
+        <div class="btn-group btn-group-sm" role="group" title="ขนาด Thumbnail">
+          <button type="button" class="btn btn-outline-secondary thumb-size-btn active" data-size="s" onclick="setThumbSize(this)" title="เล็ก">S</button>
+          <button type="button" class="btn btn-outline-secondary thumb-size-btn" data-size="m" onclick="setThumbSize(this)" title="กลาง">M</button>
+          <button type="button" class="btn btn-outline-secondary thumb-size-btn" data-size="l" onclick="setThumbSize(this)" title="ใหญ่">L</button>
+        </div>
+        <button class="btn btn-outline-secondary btn-sm" onclick="openReport()">
+          <i class="bi bi-bar-chart-line me-1"></i>Report
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="showChangelog()">
+          <i class="bi bi-journal-text me-1"></i>Changelog
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" id="btn-backfill" onclick="backfillProxy()" title="Fetch proxy image URLs for assets that don't have one yet">
+          <i class="bi bi-images me-1"></i>Backfill Proxy
+        </button>
+        <span id="cache-stat-badge" class="text-secondary small" style="font-size:.72rem;opacity:.7" title="Image cache on disk (data/img_cache/)"></span>
         <button class="btn btn-outline-danger btn-sm" onclick="clearAll()">
           <i class="bi bi-trash3 me-1"></i>Clear DB
         </button>
       </div>
     </div>
   </div>
+  </div><!-- /toolbar-bar -->
 
   <!-- Progress Section -->
   <div class="card p-3 mb-3" id="progress-section">
-    <div class="d-flex justify-content-between align-items-center mb-2">
+    <!-- Header row: label + % + cancel -->
+    <div class="d-flex justify-content-between align-items-center mb-1">
       <span class="fw-semibold small" id="progress-label">Processing…</span>
-      <span class="text-secondary small" id="progress-count"></span>
+      <div class="d-flex align-items-center gap-2">
+        <span class="text-secondary small" id="progress-count"></span>
+        <button class="btn btn-outline-danger btn-sm py-0" id="btn-cancel-batch" onclick="cancelBatch()" style="display:none;font-size:.75rem">
+          <i class="bi bi-stop-circle me-1"></i>ยกเลิก
+        </button>
+      </div>
     </div>
-    <div class="progress mb-2">
-      <div class="progress-bar progress-bar-striped progress-bar-animated" id="progress-bar" style="width:0%"></div>
+    <!-- Game-style progress bar -->
+    <div class="progress mb-2" style="height:18px;border-radius:9px;background:#1a1a1a;box-shadow:inset 0 1px 4px #000">
+      <div class="progress-bar progress-bar-striped progress-bar-animated" id="progress-bar"
+           style="width:0%;border-radius:9px;transition:width .4s ease;font-size:.72rem;font-weight:600;letter-spacing:.03em"></div>
+    </div>
+    <!-- Stats row: done / remaining / elapsed / ETA -->
+    <div class="d-flex gap-3 mb-2 small" id="progress-stats" style="display:none!important">
+      <span><i class="bi bi-check-circle-fill text-success me-1"></i><span id="stat-done">0</span> เสร็จ</span>
+      <span><i class="bi bi-hourglass-split text-warning me-1"></i><span id="stat-remaining">0</span> เหลือ</span>
+      <span><i class="bi bi-stopwatch me-1 text-info"></i><span id="stat-elapsed">0:00</span></span>
+      <span class="text-secondary">ETA <span id="stat-eta">—</span></span>
+      <span id="stat-errors-wrap" style="display:none"><i class="bi bi-x-circle-fill text-danger me-1"></i><span id="stat-errors">0</span> error</span>
     </div>
     <div class="log-box" id="log-box"></div>
+  </div>
+
+  <!-- Completion Toast (batch done) -->
+  <div id="batch-toast" class="position-fixed bottom-0 end-0 p-3" style="z-index:1100;display:none">
+    <div class="toast show align-items-center text-bg-dark border border-secondary shadow-lg" role="alert">
+      <div class="d-flex">
+        <div class="toast-body" id="batch-toast-body"></div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="document.getElementById('batch-toast').style.display='none'"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Album / Folder Filter -->
+  <div id="album-bar" class="mb-2" style="display:none">
+    <div class="d-flex gap-2 flex-wrap align-items-center" id="album-pills">
+      <button class="btn btn-sm btn-outline-secondary active album-pill" data-album="all" onclick="setAlbumFilter(this)">
+        <i class="bi bi-collection me-1"></i>All Albums
+      </button>
+    </div>
   </div>
 
   <!-- Assets Table -->
@@ -253,6 +588,24 @@
   </div>
 </div>
 
+<!-- ══════════════ Video Player Modal ══════════════ -->
+<div class="modal fade" id="videoModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content bg-black border-secondary">
+      <div class="modal-header border-secondary py-2">
+        <span class="text-secondary small" id="video-modal-title"></span>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" onclick="stopVideo()"></button>
+      </div>
+      <div class="modal-body p-0">
+        <video id="video-player" controls style="width:100%;max-height:70vh;background:#000;display:block">
+          <source id="video-source" src="" type="video/mp4" />
+          Browser ไม่รองรับ video format นี้
+        </video>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ Detail Modal ══════════════ -->
 <div class="modal fade" id="detailModal" tabindex="-1">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
@@ -266,15 +619,21 @@
       </div>
       <div class="modal-body">
 
-        <!-- Thumbnail + technical meta -->
-        <div class="d-flex gap-3 mb-3 pb-3" style="border-bottom:1px solid #2a2a2a">
-          <img id="modal-thumb" src="" class="rounded flex-shrink-0" style="width:140px;height:93px;object-fit:cover" />
-          <div class="flex-grow-1">
-            <div class="text-secondary small mb-1" id="modal-meta"></div>
-            <div class="row g-1 mt-1" style="font-size:.75rem;color:#777">
-              <div class="col-auto"><i class="bi bi-camera me-1"></i><span id="m-camera"></span></div>
-              <div class="col-auto"><i class="bi bi-person-badge me-1"></i><span id="m-photographer"></span></div>
-              <div class="col-auto"><span id="m-exif-tags"></span></div>
+        <!-- Large image preview -->
+        <div class="mb-3 pb-3" style="border-bottom:1px solid #2a2a2a">
+          <div id="modal-img-wrap">
+            <img id="modal-thumb" src="" onerror="this.style.display='none'" />
+            <div id="modal-play-btn" onclick="playVideoModal()">
+              <i class="bi bi-play-circle-fill"></i>
+            </div>
+          </div>
+          <!-- Meta row below image -->
+          <div class="d-flex flex-wrap gap-3 align-items-center">
+            <div class="text-secondary small" id="modal-meta"></div>
+            <div class="d-flex gap-3" style="font-size:.75rem;color:#777">
+              <span id="m-camera-wrap"><i class="bi bi-camera me-1"></i><span id="m-camera"></span></span>
+              <span id="m-photo-wrap"><i class="bi bi-person-badge me-1"></i><span id="m-photographer"></span></span>
+              <span id="m-exif-tags"></span>
             </div>
           </div>
         </div>
@@ -397,6 +756,28 @@
           </div>
         </div>
 
+        <!-- Context for Re-analyze -->
+        <hr class="border-secondary my-3">
+        <div class="mb-2 d-flex align-items-center justify-content-between">
+          <div class="d-flex align-items-center gap-2">
+            <span class="fw-semibold small">Re-analyze Context</span>
+            <span class="text-secondary small">ระบุ context หรือค้นข่าวให้ AI ใช้เป็นข้อมูล</span>
+          </div>
+          <button class="btn btn-outline-info btn-sm" id="news-search-btn" onclick="searchNewsForModal()">
+            <i class="bi bi-newspaper me-1"></i>ค้นข่าว
+          </button>
+        </div>
+        <!-- News search results -->
+        <div id="news-results" class="mb-2" style="display:none">
+          <div class="small text-secondary mb-1">เลือกข่าวที่เกี่ยวข้อง (คลิกเพื่อเพิ่มลง context):</div>
+          <div id="news-results-list" class="d-flex flex-column gap-1"></div>
+        </div>
+        <div class="mb-3">
+          <textarea id="ctx-text" class="form-control form-control-sm" rows="3"
+            placeholder="เช่น: งานเปิดตัว iPhone 17 Pro | ณัฐชา ทองแดง, สิทธิพร ก้องเกียรติ | The Standard Space ชั้น 4..."></textarea>
+        </div>
+        <div id="reanalyze-status" class="small text-secondary mb-2" style="display:none;"></div>
+
       </div>
       <div class="modal-footer justify-content-between">
         <div class="d-flex gap-2">
@@ -409,6 +790,9 @@
         </div>
         <div class="d-flex gap-2">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">ยกเลิก</button>
+          <button class="btn btn-outline-success btn-sm" id="reanalyze-btn" onclick="reanalyzeFromModal()">
+            <i class="bi bi-robot me-1"></i>Re-analyze
+          </button>
           <button class="btn btn-primary btn-sm" onclick="saveFromModal()">
             <i class="bi bi-floppy me-1"></i>บันทึก
           </button>
@@ -483,17 +867,52 @@
             </select>
           </div>
         </div>
+
+        <!-- Bulk Re-analyze Context -->
+        <hr class="border-secondary mt-3 mb-2">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="fw-semibold small">Re-analyze Context</span>
+          <span class="text-secondary small">(optional — ระบุ context แล้วกด "Run AI Batch ที่เลือก" เพื่อวิเคราะห์ใหม่ทันที)</span>
+        </div>
+        <div class="mt-1">
+          <textarea id="bulk-ctx-text" class="form-control form-control-sm" rows="3"
+            placeholder="เช่น: งานเปิดตัว iPhone 17 Pro | ณัฐชา ทองแดง, สิทธิพร ก้องเกียรติ | The Standard Space ชั้น 4..."></textarea>
+        </div>
+        <div id="bulk-reanalyze-status" class="small text-secondary mt-2" style="display:none;"></div>
       </div>
       <div class="modal-footer justify-content-between">
-        <button class="btn btn-outline-info btn-sm" onclick="bulkPushSelected()">
-          <i class="bi bi-upload me-1"></i>Push ที่เลือกขึ้น Mimir
-        </button>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-info btn-sm" onclick="bulkPushSelected()">
+            <i class="bi bi-upload me-1"></i>Push ที่เลือกขึ้น Mimir
+          </button>
+          <button class="btn btn-success btn-sm" id="bulk-reanalyze-btn" onclick="bulkReanalyzeAndRun()">
+            <i class="bi bi-stars me-1"></i>Run AI Batch ที่เลือก
+          </button>
+        </div>
         <div class="d-flex gap-2">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">ยกเลิก</button>
           <button class="btn btn-warning btn-sm" onclick="saveBulkEdit()">
             <i class="bi bi-floppy me-1"></i>บันทึกทั้งหมด
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ Report Modal ══════════════ -->
+<div class="modal fade" id="reportModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h6 class="modal-title mb-0"><i class="bi bi-bar-chart-line me-2"></i>Lifetime Report</h6>
+          <div class="text-secondary" style="font-size:.72rem" id="report-generated-at"></div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="report-body">
+        <div class="text-center text-secondary py-5"><i class="bi bi-arrow-repeat me-2"></i>กำลังโหลด…</div>
       </div>
     </div>
   </div>
@@ -509,12 +928,18 @@
   let modalItemId = null;
   let refreshInterval = null;
   let selectedIds = new Set();
+  let currentFolderFilter = 'all';
+  let currentAlbumFilter = 'all';
+  let lastCheckedIndex = -1;
+  let lastCheckedState = true;
 
   // ── Init ───────────────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', () => {
     loadStats();
     loadTokenStats();
     loadAssets();
+    loadFolders();
+    loadCacheStats();
     startAutoRefresh();
     document.getElementById('edit-ai-keyword').addEventListener('input', e => renderKeywordPreview(e.target.value));
   });
@@ -523,18 +948,33 @@
     refreshInterval = setInterval(() => { loadStats(); loadTokenStats(); }, 5000);
   }
 
+  // ── Cache Stats ────────────────────────────────────────────────────────
+  async function loadCacheStats() {
+    try {
+      const r = await fetch(_ROOT+'/api/cache/stats');
+      const d = await r.json();
+      const el = document.getElementById('cache-stat-badge');
+      if (d.count > 0) {
+        el.innerHTML = `<i class="bi bi-hdd me-1"></i>${d.count} cached · ${d.size_mb} MB`;
+        el.title = `Image cache: ${d.count} files, ${d.size_mb} MB (avg ${d.avg_kb} KB each) — data/img_cache/`;
+      } else {
+        el.innerHTML = '';
+      }
+    } catch(e) { /* silent */ }
+  }
+
   // ── Stats ──────────────────────────────────────────────────────────────
   async function loadStats() {
-    const r = await fetch('/api/stats');
+    const r = await fetch(_ROOT+'/api/stats');
     const d = await r.json();
     document.getElementById('stat-total').textContent = d.total;
     document.getElementById('stat-pending').textContent = d.pending + (d.processing ? ` (+${d.processing})` : '');
-    document.getElementById('stat-done').textContent = d.done;
+    document.getElementById('card-stat-done').textContent = d.done;
     document.getElementById('stat-error').textContent = d.error;
   }
 
   async function loadTokenStats() {
-    const r = await fetch('/api/token-stats');
+    const r = await fetch(_ROOT+'/api/token-stats');
     const d = await r.json();
 
     document.getElementById('token-model').textContent = d.model;
@@ -575,9 +1015,39 @@
     }
   }
 
+  // ── Folders / Albums ───────────────────────────────────────────────────
+  async function loadFolders() {
+    const r = await fetch(_ROOT+'/api/folders');
+    const folders = await r.json();
+    const bar = document.getElementById('album-bar');
+    const pills = document.getElementById('album-pills');
+    if (!folders.length) { bar.style.display = 'none'; return; }
+    bar.style.display = '';
+    // Remove old album pills (keep "All Albums")
+    [...pills.querySelectorAll('.album-pill:not([data-album="all"])')].forEach(el => el.remove());
+    folders.forEach(f => {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-sm btn-outline-secondary album-pill';
+      btn.dataset.album = f.album_key;
+      btn.onclick = function() { setAlbumFilter(this); };
+      btn.innerHTML = `<i class="bi bi-images me-1"></i><span class="pill-label" title="${esc(f.name)}">${esc(f.name)}</span><span class="badge bg-secondary ms-1">${f.count}</span>`;
+      pills.appendChild(btn);
+    });
+  }
+
+  function setAlbumFilter(btn) {
+    currentAlbumFilter = btn.dataset.album;
+    currentPage = 1;
+    document.querySelectorAll('.album-pill').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    loadAssets();
+  }
+
   // ── Assets Table ───────────────────────────────────────────────────────
   async function loadAssets() {
-    const r = await fetch(`/api/assets?status=${currentFilter}&page=${currentPage}&per_page=${perPage}`);
+    const folderParam = currentFolderFilter !== 'all' ? `&folder_id=${encodeURIComponent(currentFolderFilter)}` : '';
+    const albumParam = currentAlbumFilter !== 'all' ? `&album_key=${encodeURIComponent(currentAlbumFilter)}` : '';
+    const r = await fetch(`${_ROOT}/api/assets?status=${currentFilter}&page=${currentPage}&per_page=${perPage}${folderParam}${albumParam}`);
     const d = await r.json();
     totalPages = Math.ceil(d.total / perPage) || 1;
     renderTable(d.items);
@@ -590,16 +1060,24 @@
       tbody.innerHTML = `<tr><td colspan="8" class="text-center text-secondary py-5">No assets found</td></tr>`;
       return;
     }
-    tbody.innerHTML = items.map(a => {
+    tbody.innerHTML = items.map((a, i) => {
       const checked = selectedIds.has(a.item_id) ? 'checked' : '';
       return `
-      <tr>
-        <td><input type="checkbox" class="form-check-input row-check" value="${a.item_id}" ${checked} onchange="toggleRowCheck(this)"></td>
-        <td>${a.thumbnail_url
-          ? `<img src="${a.thumbnail_url}" class="thumb" onerror="this.style.display='none'" />`
-          : `<div class="thumb-placeholder"><i class="bi bi-image"></i></div>`}</td>
-        <td class="text-truncate" style="max-width:180px" title="${esc(a.title)}">${esc(a.title) || '<span class="text-muted">—</span>'}</td>
-        <td><div class="ai-preview" title="${esc(a.ai_title)}">${esc(a.ai_title) || '<span class="text-muted">—</span>'}</div></td>
+      <tr data-item-id="${a.item_id}" data-album="${esc(a.album_key||'')}">
+        <td><input type="checkbox" class="form-check-input row-check" value="${a.item_id}" data-index="${i}" ${checked} onclick="toggleRowCheck(event,this)"></td>
+        <td>${(() => {
+          const isVid = (a.item_type||'').toLowerCase()==='video' || /\.(mp4|mov|mxf|m4v|mts|avi)$/i.test(a.title||'');
+          const canPlay = /\.(mp4|mov|m4v)$/i.test(a.title||'') || (a.item_type||'').toLowerCase()==='video';
+          if (a.thumbnail_url) {
+            const img = `<img src="${a.thumbnail_url}" class="thumb" onerror="this.style.display='none'" />`;
+            if (isVid && canPlay)
+              return `<div class="thumb-wrap">${img}<div class="thumb-play" onclick="playVideo('${a.item_id}','${esc(a.title||'')}')"><i class="bi bi-play-circle-fill"></i></div></div>`;
+            return img;
+          }
+          return `<div class="thumb-placeholder"><i class="bi bi-${isVid?'camera-video':'image'}"></i></div>`;
+        })()}</td>
+        <td title="${esc(a.title)}"><div class="title-cell">${esc(a.title) || '<span class="text-muted">—</span>'}</div></td>
+        <td><div class="ai-title-cell" title="${esc(a.ai_title)}">${esc(a.ai_title) || '<span class="text-muted">—</span>'}</div></td>
         <td><span class="text-muted small">${esc(a.ai_category) || '—'}</span> <span class="text-secondary" style="font-size:.75rem">${esc(a.ai_subcat) || ''}</span></td>
         <td><span class="badge ${badgeClass(a.status)}">${a.status}</span></td>
         <td>
@@ -618,8 +1096,22 @@
     updateBulkButton();
   }
 
-  function toggleRowCheck(cb) {
-    if (cb.checked) selectedIds.add(cb.value); else selectedIds.delete(cb.value);
+  function toggleRowCheck(event, cb) {
+    const idx = parseInt(cb.dataset.index);
+    if (event.shiftKey && lastCheckedIndex !== -1) {
+      const allCbs = [...document.querySelectorAll('.row-check')];
+      const [from, to] = [Math.min(lastCheckedIndex, idx), Math.max(lastCheckedIndex, idx)];
+      allCbs.forEach((c, i) => {
+        if (i >= from && i <= to) {
+          c.checked = lastCheckedState;
+          if (lastCheckedState) selectedIds.add(c.value); else selectedIds.delete(c.value);
+        }
+      });
+    } else {
+      if (cb.checked) selectedIds.add(cb.value); else selectedIds.delete(cb.value);
+      lastCheckedIndex = idx;
+      lastCheckedState = cb.checked;
+    }
     updateBulkButton();
   }
 
@@ -657,16 +1149,52 @@
     loadAssets();
   }
 
+  // ── Video Player ──────────────────────────────────────────────────────
+  let _videoModalItemId = null;
+  function playVideo(itemId, title) {
+    _videoModalItemId = itemId;
+    document.getElementById('video-modal-title').textContent = title || itemId;
+    const src = `/api/assets/${itemId}/video`;
+    document.getElementById('video-source').src = src;
+    const player = document.getElementById('video-player');
+    player.load();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('videoModal')).show();
+  }
+  function playVideoModal() {
+    if (_videoModalItemId) playVideo(_videoModalItemId, document.getElementById('modal-item-id').textContent);
+  }
+  function stopVideo() {
+    const player = document.getElementById('video-player');
+    player.pause();
+    player.src = '';
+    document.getElementById('video-source').src = '';
+  }
+  document.getElementById('videoModal').addEventListener('hidden.bs.modal', stopVideo);
+
   // ── Detail Modal ───────────────────────────────────────────────────────
   async function openDetail(itemId) {
     modalItemId = itemId;
-    const r = await fetch(`/api/assets/${itemId}`);
+    _videoModalItemId = itemId;
+    const r = await fetch(`${_ROOT}/api/assets/${itemId}`);
     const a = await r.json();
+
+    const isVid = (a.item_type||'').toLowerCase()==='video' || /\.(mp4|mov|mxf|m4v|mts|avi)$/i.test(a.title||'');
+    const canPlay = /\.(mp4|mov|m4v)$/i.test(a.title||'') || (a.item_type||'').toLowerCase()==='video';
 
     document.getElementById('modal-item-id').textContent = a.title || itemId;
     document.getElementById('modal-ingest-path').textContent = a.ingest_path || '';
-    document.getElementById('modal-thumb').src = a.thumbnail_url || '';
-    document.getElementById('modal-thumb').style.display = a.thumbnail_url ? '' : 'none';
+
+    // Use proxy image endpoint for hi-res (falls back to thumbnail internally)
+    const imgEl = document.getElementById('modal-thumb');
+    imgEl.style.display = '';
+    if (isVid) {
+      // For video use thumbnail directly (proxy_url is the video file itself)
+      imgEl.src = a.thumbnail_url || '';
+    } else {
+      imgEl.src = `/api/assets/${itemId}/image`;
+    }
+    const playBtn = document.getElementById('modal-play-btn');
+    playBtn.style.display = (isVid && canPlay) ? 'flex' : 'none';
     document.getElementById('modal-meta').innerHTML =
       [a.item_type, a.file_type,
        a.width && a.height ? `${a.width}×${a.height}` : '',
@@ -713,7 +1241,183 @@
     document.getElementById('edit-ai-keyword').value     = a.ai_keyword || '';
     renderKeywordPreview(a.ai_keyword || '');
 
+    // Populate context fields
+    document.getElementById('ctx-text').value = a.context_text || '';
+    document.getElementById('reanalyze-status').style.display = 'none';
+
     new bootstrap.Modal(document.getElementById('detailModal')).show();
+  }
+
+  // ── Report ────────────────────────────────────────────────────────────
+  async function openReport() {
+    const modalEl = document.getElementById('reportModal');
+    document.getElementById('report-body').innerHTML =
+      '<div class="text-center text-secondary py-5"><i class="bi bi-arrow-repeat me-2"></i>กำลังโหลด…</div>';
+    new bootstrap.Modal(modalEl).show();
+    try {
+      const r = await fetch(_ROOT+'/api/report');
+      const d = await r.json();
+      renderReport(d);
+    } catch(e) {
+      document.getElementById('report-body').innerHTML =
+        `<div class="text-center text-danger py-4">Error: ${e.message}</div>`;
+    }
+  }
+
+  function fmtDur(sec) {
+    if (sec === null || sec === undefined) return '—';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${h}ชม. ${m}น.`;
+    if (m > 0) return `${m}น. ${s}ว.`;
+    return `${s}ว.`;
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString('th-TH', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  }
+
+  function renderReport(d) {
+    const s = d.summary;
+    document.getElementById('report-generated-at').textContent =
+      `สร้างเมื่อ ${fmtDate(d.generated_at)}  ·  ${d.provider.toUpperCase()} · ${d.model}`;
+
+    // --- Summary cards ---
+    const doneRate = s.total_assets ? Math.round(s.total_done / s.total_assets * 100) : 0;
+    const avgTok   = s.total_done   ? Math.round(s.tokens_total / s.total_done) : 0;
+    const avgCost  = s.total_done   ? (s.cost_thb / s.total_done).toFixed(4) : '0';
+
+    let html = `
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-4 col-lg-2">
+        <div class="report-stat-card">
+          <div class="report-stat-num" style="color:#5a5">${s.total_done.toLocaleString()}</div>
+          <div class="report-stat-lbl">Assets Done</div>
+          <div style="font-size:.72rem;color:#666;margin-top:4px">${doneRate}% of ${s.total_assets.toLocaleString()}</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        <div class="report-stat-card">
+          <div class="report-stat-num">${s.total_folders}</div>
+          <div class="report-stat-lbl">Folders</div>
+          <div style="font-size:.72rem;color:#666;margin-top:4px">${s.total_error > 0 ? s.total_error + ' error' : 'no errors'}</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        <div class="report-stat-card">
+          <div class="report-stat-num" style="font-size:1.3rem">${(s.tokens_total/1000).toFixed(1)}K</div>
+          <div class="report-stat-lbl">Total Tokens</div>
+          <div style="font-size:.72rem;color:#666;margin-top:4px">avg ${avgTok.toLocaleString()} / asset</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        <div class="report-stat-card">
+          <div class="report-stat-num" style="color:#e0b040">${s.cost_thb.toFixed(2)}</div>
+          <div class="report-stat-lbl">ค่าใช้จ่าย (THB)</div>
+          <div style="font-size:.72rem;color:#666;margin-top:4px">$${s.cost_usd.toFixed(4)} USD · avg ฿${avgCost}/รูป</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        <div class="report-stat-card">
+          <div class="report-stat-num" style="font-size:1.3rem">${fmtDur(s.elapsed_sec)}</div>
+          <div class="report-stat-lbl">เวลาทั้งหมด</div>
+          <div style="font-size:.72rem;color:#666;margin-top:4px">${fmtDate(s.first_processed).split(',')[0] || '—'} → ${fmtDate(s.last_processed).split(',')[0] || '—'}</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        <div class="report-stat-card">
+          <div style="font-size:.72rem;color:#555;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Token Price</div>
+          <div style="font-size:.8rem;color:#aaa">In: $${d.price_input_per_m}/M</div>
+          <div style="font-size:.8rem;color:#aaa">Out: $${d.price_output_per_m}/M</div>
+          <div style="font-size:.7rem;color:#555;margin-top:4px">1 USD ≈ 34 THB</div>
+        </div>
+      </div>
+    </div>`;
+
+    // --- Per-folder table ---
+    html += `
+    <div class="mb-4">
+      <div class="section-title mb-3"><i class="bi bi-folder2 me-1"></i>By Folder / Event (${d.by_folder.length})</div>
+      <div style="overflow-x:auto">
+      <table class="table table-hover mb-0" style="font-size:.82rem">
+        <thead>
+          <tr>
+            <th>Folder / Event</th>
+            <th class="text-end">Total</th>
+            <th class="text-end">Done</th>
+            <th class="text-end">Error</th>
+            <th class="text-end">Tokens</th>
+            <th class="text-end">Cost (THB)</th>
+            <th class="text-end">Cost (USD)</th>
+          </tr>
+        </thead>
+        <tbody>`;
+    const maxCost = Math.max(...d.by_folder.map(f => f.cost_thb), 0.001);
+    for (const f of d.by_folder) {
+      const pct = Math.round(f.done / (f.total || 1) * 100);
+      const barW = Math.round(f.cost_thb / maxCost * 60);
+      html += `<tr class="report-folder-row">
+        <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.folder)}">${esc(f.folder)}</td>
+        <td class="text-end text-secondary">${f.total}</td>
+        <td class="text-end"><span style="color:${pct===100?'#5a5':'#ccc'}">${f.done}</span> <span style="font-size:.7rem;color:#555">${pct}%</span></td>
+        <td class="text-end">${f.error > 0 ? `<span style="color:#d55">${f.error}</span>` : '<span style="color:#555">—</span>'}</td>
+        <td class="text-end text-secondary">${(f.tokens_total/1000).toFixed(1)}K</td>
+        <td class="text-end">
+          <div class="d-flex align-items-center justify-content-end gap-2">
+            <div class="report-day-bar" style="width:${barW}px"></div>
+            <span style="color:#e0b040;min-width:40px;text-align:right">${f.cost_thb.toFixed(3)}</span>
+          </div>
+        </td>
+        <td class="text-end text-secondary">$${f.cost_usd.toFixed(4)}</td>
+      </tr>`;
+    }
+    // Totals row
+    const totTok = d.by_folder.reduce((a,f)=>a+f.tokens_total, 0);
+    const totThb = d.by_folder.reduce((a,f)=>a+f.cost_thb, 0);
+    const totUsd = d.by_folder.reduce((a,f)=>a+f.cost_usd, 0);
+    html += `<tr style="border-top:2px solid #333;font-weight:600">
+        <td>รวม</td>
+        <td class="text-end">${s.total_assets}</td>
+        <td class="text-end" style="color:#5a5">${s.total_done}</td>
+        <td class="text-end" style="color:${s.total_error>0?'#d55':'#555'}">${s.total_error||'—'}</td>
+        <td class="text-end">${(totTok/1000).toFixed(1)}K</td>
+        <td class="text-end" style="color:#e0b040">${totThb.toFixed(3)}</td>
+        <td class="text-end text-secondary">$${totUsd.toFixed(4)}</td>
+      </tr>`;
+    html += `</tbody></table></div></div>`;
+
+    // --- Per-day table ---
+    if (d.by_day.length > 0) {
+      const maxDone = Math.max(...d.by_day.map(x => x.done), 1);
+      html += `
+      <div class="section-title mb-3"><i class="bi bi-calendar3 me-1"></i>By Day (${d.by_day.length} วัน)</div>
+      <div style="overflow-x:auto">
+      <table class="table table-hover mb-0" style="font-size:.82rem">
+        <thead><tr>
+          <th>วันที่</th><th class="text-end">Done</th>
+          <th class="text-end">Tokens</th><th class="text-end">Cost (THB)</th>
+        </tr></thead>
+        <tbody>`;
+      for (const day of d.by_day) {
+        const barW = Math.round(day.done / maxDone * 80);
+        html += `<tr>
+          <td>${day.date}</td>
+          <td class="text-end">
+            <div class="d-flex align-items-center justify-content-end gap-2">
+              <div class="report-day-bar" style="width:${barW}px;background:#3a6a8a"></div>
+              <span>${day.done}</span>
+            </div>
+          </td>
+          <td class="text-end text-secondary">${(day.tokens/1000).toFixed(1)}K</td>
+          <td class="text-end" style="color:#e0b040">${day.cost_thb.toFixed(4)}</td>
+        </tr>`;
+      }
+      html += `</tbody></table></div>`;
+    }
+
+    document.getElementById('report-body').innerHTML = html;
   }
 
   function renderKeywordPreview(raw) {
@@ -749,7 +1453,7 @@
       ai_technical_tags:         g('edit-tech-tags'),
       ai_keyword:                g('edit-ai-keyword'),
     };
-    const r = await fetch(`/api/assets/${modalItemId}`, {
+    const r = await fetch(`${_ROOT}/api/assets/${modalItemId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -768,9 +1472,66 @@
     bootstrap.Modal.getInstance(document.getElementById('detailModal'))?.hide();
   }
 
+  async function reanalyzeFromModal() {
+    if (!modalItemId) return;
+    const urls = [];
+    const text = document.getElementById('ctx-text').value.trim();
+
+    const btn = document.getElementById('reanalyze-btn');
+    const status = document.getElementById('reanalyze-status');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังวิเคราะห์...';
+    status.style.display = 'block';
+    status.textContent = 'กำลังส่งข้อมูลให้ AI วิเคราะห์...';
+
+    try {
+      const r = await fetch(`${_ROOT}/api/assets/${modalItemId}/reanalyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context_urls: urls, context_text: text }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        status.textContent = 'วิเคราะห์เสร็จแล้ว — กำลังอัพเดทข้อมูล...';
+        // Re-populate modal with new data
+        const a = data.asset;
+        document.getElementById('edit-ai-title').value       = a.ai_title || '';
+        document.getElementById('edit-ai-desc').value        = a.ai_description || '';
+        document.getElementById('edit-ai-cat').value         = a.ai_category || '';
+        document.getElementById('edit-ai-subcat').value      = a.ai_subcat || '';
+        document.getElementById('edit-editorial').value      = a.ai_editorial_categories || '';
+        document.getElementById('edit-persons').value        = a.ai_persons || '';
+        document.getElementById('edit-location').value       = a.ai_location || '';
+        document.getElementById('edit-event').value          = a.ai_event_occasion || '';
+        document.getElementById('edit-emotion').value        = a.ai_emotion_mood || '';
+        document.getElementById('edit-language').value       = a.ai_language || '';
+        document.getElementById('edit-department').value     = a.ai_department || '';
+        document.getElementById('edit-project').value        = a.ai_project_series || '';
+        document.getElementById('edit-episode').value        = a.ai_episode_segment || '';
+        document.getElementById('edit-deliverable').value    = a.ai_deliverable_type || '';
+        document.getElementById('edit-right-license').value  = a.ai_right_license || '';
+        document.getElementById('edit-subject-tags').value   = a.ai_subject_tags || '';
+        document.getElementById('edit-visual').value         = a.ai_visual_attributes || '';
+        document.getElementById('edit-tech-tags').value      = a.ai_technical_tags || '';
+        document.getElementById('edit-ai-keyword').value     = a.ai_keyword || '';
+        renderKeywordPreview(a.ai_keyword || '');
+        status.textContent = '✓ วิเคราะห์เสร็จแล้ว';
+        loadAssets();
+      } else {
+        const err = await r.json();
+        status.textContent = '✗ Error: ' + (err.detail || 'ไม่สำเร็จ');
+      }
+    } catch (e) {
+      status.textContent = '✗ ' + e.message;
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-robot me-1"></i>Re-analyze';
+    }
+  }
+
   async function pushFromModal() {
     if (!modalItemId) return;
-    const r = await fetch(`/api/assets/${modalItemId}/push`, { method: 'POST' });
+    const r = await fetch(`${_ROOT}/api/assets/${modalItemId}/push`, { method: 'POST' });
     const d = await r.json();
     alert(d.ok ? 'Push สำเร็จแล้ว' : `Error: ${d.detail}`);
   }
@@ -783,6 +1544,8 @@
     ['bulk-cat','bulk-subcat','bulk-editorial','bulk-department','bulk-project',
      'bulk-photographer','bulk-rights','bulk-location','bulk-language','bulk-emotion'
     ].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('bulk-ctx-text').value = '';
+    document.getElementById('bulk-reanalyze-status').style.display = 'none';
     new bootstrap.Modal(document.getElementById('bulkModal')).show();
   }
 
@@ -806,7 +1569,7 @@
       if (v) fields[field] = v;
     });
     if (Object.keys(fields).length === 0) { alert('ไม่มี field ที่กรอก'); return; }
-    const r = await fetch('/api/assets/bulk-edit', {
+    const r = await fetch(_ROOT+'/api/assets/bulk-edit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ item_ids: [...selectedIds], fields }),
@@ -821,11 +1584,56 @@
     }
   }
 
+  async function bulkReanalyzeAndRun() {
+    if (selectedIds.size === 0) return;
+    const text = document.getElementById('bulk-ctx-text').value.trim();
+    const btn = document.getElementById('bulk-reanalyze-btn');
+    const status = document.getElementById('bulk-reanalyze-status');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังเตรียม...';
+    status.style.display = 'block';
+    status.textContent = `Reset ${selectedIds.size} assets เป็น pending...`;
+
+    try {
+      // Step 1: reset selected assets to pending with context
+      const r = await fetch(_ROOT+'/api/assets/bulk-reanalyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_ids: [...selectedIds], context_urls: [], context_text: text }),
+      });
+      if (!r.ok) {
+        status.textContent = '✗ Error: ' + (await r.json()).detail;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-stars me-1"></i>Run AI Batch ที่เลือก';
+        return;
+      }
+      const d = await r.json();
+      status.textContent = `✓ ${d.updated} assets พร้อมแล้ว — กำลังเริ่ม batch...`;
+
+      // Step 2: close modal and start batch with only the selected assets' albums
+      const albumKeys = [...new Set([...selectedIds].map(id => {
+        // Get album key for each selected asset from the table rows
+        const row = document.querySelector(`tr[data-item-id="${id}"]`);
+        return row?.dataset?.album || null;
+      }).filter(Boolean))];
+      bootstrap.Modal.getInstance(document.getElementById('bulkModal'))?.hide();
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-stars me-1"></i>Run AI Batch ที่เลือก';
+      await startBatch(albumKeys.length ? albumKeys : null);
+
+    } catch (e) {
+      status.textContent = '✗ ' + e.message;
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-stars me-1"></i>Run AI Batch ที่เลือก';
+    }
+  }
+
   async function bulkPushSelected() {
     if (selectedIds.size === 0) return;
     bootstrap.Modal.getInstance(document.getElementById('bulkModal'))?.hide();
-    showProgress(`Pushing ${selectedIds.size} assets to Mimir…`);
-    const r = await fetch('/api/assets/bulk-push', {
+    showProgress(`Pushing ${selectedIds.size} assets to Mimir…`, 'push');
+    const r = await fetch(_ROOT+'/api/assets/bulk-push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ item_ids: [...selectedIds] }),
@@ -854,52 +1662,71 @@
   }
 
   // ── Actions ────────────────────────────────────────────────────────────
-  // อัพเดท folder count badge เมื่อ textarea เปลี่ยน
+  function getFolderUrls() {
+    return [...document.querySelectorAll('.folder-url-input')]
+      .map(el => el.value.trim()).filter(v => v.length > 0);
+  }
+
+  function getFolderContexts() {
+    // Returns context texts in parallel with non-empty folder URL indices
+    const urlEls = [...document.querySelectorAll('.folder-url-input')];
+    const ctxEls = [...document.querySelectorAll('.folder-ctx-input')];
+    const result = [];
+    urlEls.forEach((urlEl, i) => {
+      if (urlEl.value.trim()) result.push(ctxEls[i]?.value.trim() || '');
+    });
+    return result;
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
-    const ta = document.getElementById('folder-url-input');
-    if (ta) ta.addEventListener('input', updateFolderCount);
+    document.getElementById('folder-url-grid')
+      .addEventListener('input', updateFolderCount);
   });
 
   function updateFolderCount() {
-    const lines = document.getElementById('folder-url-input').value
-      .split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const urls = getFolderUrls();
     const badge = document.getElementById('folder-count-badge');
-    badge.textContent = lines.length > 0 ? `${lines.length} โฟลเดอร์` : '';
+    badge.textContent = urls.length > 0 ? `${urls.length} โฟลเดอร์` : '';
   }
 
   async function startFetch() {
-    const raw = document.getElementById('folder-url-input').value;
-    const folderUrls = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const folderUrls = getFolderUrls();
     if (folderUrls.length === 0) { alert('กรุณาระบุ Folder URL หรือ Folder ID อย่างน้อย 1 บรรทัด'); return; }
+    const contextTexts = getFolderContexts();
 
     const btn = document.getElementById('btn-fetch');
     btn.disabled = true;
 
-    const r = await fetch('/api/fetch', {
+    const r = await fetch(_ROOT+'/api/fetch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder_urls: folderUrls }),
+      body: JSON.stringify({ folder_urls: folderUrls, context_texts: contextTexts }),
     });
     if (!r.ok) { alert((await r.json()).detail); btn.disabled = false; return; }
 
     const { folder_ids, count } = await r.json();
-    showProgress(`Fetching ${count} folder${count > 1 ? 's' : ''} from Mimir…`);
+    showProgress(`กำลังสแกน Hires subfolders…`, 'fetch');
 
-    const es = new EventSource('/api/fetch/stream');
+    const es = new EventSource(_ROOT+'/api/fetch/stream');
     es.onmessage = e => {
       const d = JSON.parse(e.data);
       const folderTag = d.folder_total > 1 ? ` [${d.folder_index}/${d.folder_total}]` : '';
-      if (d.type === 'folder_start') {
-        appendLog(`\n📁 Folder ${d.folder_index}/${d.folder_total}: ${d.folder_id}...`);
+      if (d.type === 'scanning') {
+        appendLog(`🔍 สแกน [${d.folder_index}/${d.folder_total}]: ${d.folder_id}...`);
+        setProgress(0, 1, `กำลังค้นหา Hires subfolders…`);
+      } else if (d.type === 'hires_found') {
+        appendLog(`  └─ พบ ${d.count} Hires: ${d.names.join(', ')}`);
+      } else if (d.type === 'folder_start') {
+        appendLog(`\n📁 Fetch ${d.folder_index}/${d.folder_total}: ${d.folder_id}...`);
       } else if (d.type === 'progress') {
         setProgress(d.fetched, d.total, `Folder${folderTag} — Fetched ${d.fetched} / ${d.total}`);
         appendLog(`${folderTag} ${d.fetched}/${d.total}`);
       } else if (d.type === 'done') {
         appendLog(`✓ Folder${folderTag} done: ${d.fetched} items`);
         if (!d.folder_index || d.folder_index === d.folder_total) {
-          // โฟลเดอร์สุดท้ายเสร็จแล้ว
-          setProgress(1, 1, `✓ ดึงครบทุกโฟลเดอร์แล้ว`);
+          setProgress(1, 1, `✓ ดึงครบทุก Hires folders แล้ว`);
           es.close(); btn.disabled = false;
+          loadFolders();
           loadStats(); loadAssets();
         }
       } else if (d.type === 'error') {
@@ -910,45 +1737,166 @@
     es.onerror = () => { appendLog('✗ Stream error'); es.close(); btn.disabled = false; };
   }
 
-  async function startBatch() {
+  // ── Batch Album Modal ─────────────────────────────────────────────────────
+  let _batchAlbumData = [];
+
+  async function openBatchAlbumModal() {
+    const summary = document.getElementById('batch-album-summary');
+    const tbody   = document.getElementById('batch-album-tbody');
+    summary.textContent = 'กำลังโหลดข้อมูล album...';
+    tbody.innerHTML = '';
+    new bootstrap.Modal(document.getElementById('batchAlbumModal')).show();
+
+    try {
+      const r = await fetch(_ROOT+'/api/album-stats');
+      const data = await r.json();
+      // Only albums with pending assets
+      _batchAlbumData = data.filter(a => a.pending > 0);
+
+      if (_batchAlbumData.length === 0) {
+        summary.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>ไม่มี pending assets — ทุก album ประมวลผลแล้ว';
+        document.getElementById('batch-album-start-btn').disabled = true;
+        return;
+      }
+      document.getElementById('batch-album-start-btn').disabled = false;
+
+      const totalPending = _batchAlbumData.reduce((s, a) => s + a.pending, 0);
+      summary.innerHTML = `พบ <strong>${_batchAlbumData.length}</strong> album มี pending รวม <strong>${totalPending}</strong> ภาพ — เลือก album ที่ต้องการรัน`;
+
+      tbody.innerHTML = _batchAlbumData.map((a, i) => `
+        <tr>
+          <td><input type="checkbox" class="form-check-input batch-album-chk" value="${i}" checked
+              onchange="updateBatchAlbumCount()"></td>
+          <td class="small">${a.name}</td>
+          <td class="text-end small text-warning">${a.pending}</td>
+          <td class="text-end small text-success">${a.done}</td>
+          <td class="text-end small text-secondary">${a.total}</td>
+        </tr>`).join('');
+      updateBatchAlbumCount();
+    } catch(e) {
+      summary.textContent = '✗ โหลดล้มเหลว: ' + e.message;
+    }
+  }
+
+  function batchAlbumSelectAll(checked) {
+    document.querySelectorAll('.batch-album-chk').forEach(c => c.checked = checked);
+    updateBatchAlbumCount();
+  }
+
+  function updateBatchAlbumCount() {
+    const checked = [...document.querySelectorAll('.batch-album-chk:checked')];
+    const total   = checked.reduce((s, c) => s + (_batchAlbumData[+c.value]?.pending || 0), 0);
+    document.getElementById('batch-album-count').textContent =
+      `เลือก ${checked.length} album (${total} ภาพ)`;
+  }
+
+  async function startBatchFromModal() {
+    const checked   = [...document.querySelectorAll('.batch-album-chk:checked')];
+    const albumKeys = checked.map(c => _batchAlbumData[+c.value].name);
+    bootstrap.Modal.getInstance(document.getElementById('batchAlbumModal'))?.hide();
+    await startBatch(albumKeys);
+  }
+
+  // ── Start Batch (called from modal or bulkReanalyzeAndRun) ─────────────────
+  async function startBatch(albumKeys = null) {
     const btn = document.getElementById('btn-batch');
     btn.disabled = true;
-    const r = await fetch('/api/batch', { method: 'POST' });
-    if (!r.ok) { alert((await r.json()).detail); btn.disabled = false; return; }
+    const body = albumKeys ? { album_keys: albumKeys } : {};
+    let r = await fetch(_ROOT+'/api/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      if (r.status === 409) {
+        // Batch flag stuck — offer force restart
+        if (!confirm('Batch กำลังทำงานอยู่ (หรือ flag ค้าง)\nกด OK เพื่อ Force Restart')) {
+          btn.disabled = false; return;
+        }
+        await fetch(_ROOT+'/api/batch/reset', { method: 'DELETE' });
+        r = await fetch(_ROOT+'/api/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) { alert((await r.json()).detail); btn.disabled = false; return; }
+      } else {
+        alert(err.detail); btn.disabled = false; return;
+      }
+    }
+    const scope = albumKeys?.length ? `${albumKeys.length} album` : 'ทั้งหมด';
 
-    showProgress('Running Gemini Batch…');
-    const es = new EventSource('/api/batch/stream');
+    showProgress(`กำลังวิเคราะห์ภาพด้วย AI… (${scope})`, 'batch');
+    let lastEvent = null;
+    let batchDone = false;
+    const es = new EventSource(_ROOT+'/api/batch/stream');
     es.onmessage = e => {
       const d = JSON.parse(e.data);
       if (d.type === 'progress') {
-        setProgress(d.processed + d.errors, d.total,
-          `Processing ${d.processed + d.errors} / ${d.total} — ${d.errors} errors` + (d.current ? ` — ${d.current}` : ''));
-        appendLog(`[${d.processed}/${d.total}] ${d.current || ''}`);
+        const done = d.processed, errs = d.errors, total = d.total;
+        const current = done + errs;
+        setProgress(current, total,
+          d.current ? `วิเคราะห์: ${d.current}` : `กำลังประมวลผล…`,
+          { done, remaining: total - current, errors: errs });
+        if (d.current) appendLog(`[${done}/${total}] ${d.current}`);
+        lastEvent = d;
       } else if (d.type === 'done') {
-        setProgress(d.total, d.total, `Done — ${d.processed} processed, ${d.errors} errors`);
-        appendLog(`✓ Batch complete: ${d.processed} done, ${d.errors} errors`);
+        batchDone = true;
+        setProgress(d.total, d.total, `✓ เสร็จสิ้น — ${d.processed} ภาพ, ${d.errors} error`,
+          { done: d.processed, remaining: 0, errors: d.errors });
+        appendLog(`✓ เสร็จสิ้น: ${d.processed} ภาพ, ${d.errors} error`);
         es.close(); btn.disabled = false;
-        loadStats(); loadAssets(); loadTokenStats();
+        document.getElementById('btn-cancel-batch').style.display = 'none';
+        document.getElementById('btn-stop-batch').style.display   = 'none';
+        document.getElementById('btn-batch').style.display        = '';
+        loadStats(); loadAssets(); loadTokenStats(); loadCacheStats();
+        const albumName = currentAlbumFilter !== 'all' ? currentAlbumFilter : (lastEvent?.current ? '' : '');
+        showBatchToast(d.processed, d.errors, albumName);
+      } else if (d.type === 'cancelled') {
+        batchDone = true;
+        const done = d.processed || 0, errs = d.errors || 0;
+        setProgress(done + errs, d.total || (done + errs), `⛔ ยกเลิกแล้ว — เสร็จ ${done} ภาพ`,
+          { done, remaining: (d.total || 0) - done - errs, errors: errs });
+        appendLog(`⛔ ยกเลิกโดยผู้ใช้: เสร็จไปแล้ว ${done} ภาพ`);
+        es.close(); btn.disabled = false;
+        document.getElementById('btn-cancel-batch').style.display = 'none';
+        document.getElementById('btn-stop-batch').style.display   = 'none';
+        document.getElementById('btn-batch').style.display        = '';
+        loadStats(); loadAssets();
       } else if (d.type === 'rate_limit') {
-        setProgress(d.processed + d.errors, d.total, `⚠️ หยุดชั่วคราว — ${d.message}`);
+        batchDone = true;
+        setProgress((d.processed||0) + (d.errors||0), d.total||1, `⏳ หยุดชั่วคราว — rate limit`,
+          { done: d.processed, remaining: (d.total||1) - (d.processed||0), errors: d.errors });
         appendLog(`⚠️ Rate limit: ${d.message}`);
         es.close(); btn.disabled = false;
+        document.getElementById('btn-cancel-batch').style.display = 'none';
+        document.getElementById('btn-stop-batch').style.display   = 'none';
+        document.getElementById('btn-batch').style.display        = '';
         loadTokenStats();
       } else if (d.type === 'error') {
+        batchDone = true;
         appendLog(`✗ Error: ${d.message}`);
         es.close(); btn.disabled = false;
+        document.getElementById('btn-cancel-batch').style.display = 'none';
+        document.getElementById('btn-stop-batch').style.display   = 'none';
+        document.getElementById('btn-batch').style.display        = '';
       }
     };
-    es.onerror = () => { appendLog('✗ Stream error'); es.close(); btn.disabled = false; };
+    // onerror fires on normal connection-close too — only log if batch didn't finish cleanly
+    es.onerror = () => {
+      if (!batchDone) appendLog('✗ Stream disconnected');
+      es.close(); btn.disabled = false;
+    };
   }
 
   async function pushAll() {
     if (!confirm('Push all "done" assets to Mimir?')) return;
     const btn = document.getElementById('btn-push-all');
     btn.disabled = true;
-    showProgress('Pushing to Mimir…');
+    showProgress('Pushing to Mimir…', 'push');
     try {
-      const r = await fetch('/api/push-all', { method: 'POST' });
+      const r = await fetch(_ROOT+'/api/push-all', { method: 'POST' });
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
@@ -978,36 +1926,140 @@
   }
 
   async function resetAsset(itemId) {
-    await fetch(`/api/assets/${itemId}/reset`, { method: 'PATCH' });
+    await fetch(`${_ROOT}/api/assets/${itemId}/reset`, { method: 'PATCH' });
     loadAssets(); loadStats();
   }
 
   async function clearAll() {
-    if (!confirm('Delete all assets from the local DB?')) return;
-    const r = await fetch('/api/assets', { method: 'DELETE' });
+    if (!confirm('ลบ assets ทั้งหมดออกจาก DB ใช่ไหม?')) return;
+    const r = await fetch(_ROOT+'/api/assets', { method: 'DELETE' });
     const d = await r.json();
-    if (d.deleted !== undefined) { loadStats(); loadAssets(); hideProgress(); }
-    else alert(d.detail);
+    if (d.deleted !== undefined) {
+      // Reset all filters and UI state
+      currentAlbumFilter = 'all';
+      currentFolderFilter = 'all';
+      currentPage = 1;
+      selectedIds.clear();
+      document.querySelectorAll('.album-pill').forEach(p => p.classList.remove('active'));
+      document.querySelector('.album-pill[data-album="all"]')?.classList.add('active');
+      document.getElementById('album-bar').style.display = 'none';
+      document.querySelectorAll('.album-pill:not([data-album="all"])').forEach(el => el.remove());
+      document.getElementById('bulk-count-badge').style.display = 'none';
+      document.getElementById('btn-bulk-edit').disabled = true;
+      hideProgress();
+      loadStats();
+      loadAssets();
+      loadCacheStats();
+    } else alert(d.detail);
   }
 
   // ── Progress helpers ───────────────────────────────────────────────────
-  function showProgress(label) {
+  // ── Progress tracking state ────────────────────────────────────────────
+  let _progressStart = null;
+  let _progressTimer = null;
+  let _progressMode = 'fetch'; // 'fetch' | 'batch' | 'push'
+
+  function _fmtDuration(secs) {
+    const m = Math.floor(secs / 60), s = Math.floor(secs % 60);
+    return `${m}:${String(s).padStart(2,'0')}`;
+  }
+
+  function showProgress(label, mode = 'fetch') {
+    _progressMode = mode;
+    _progressStart = Date.now();
+    clearInterval(_progressTimer);
     document.getElementById('progress-section').style.display = '';
     document.getElementById('progress-label').textContent = label;
     document.getElementById('progress-bar').style.width = '0%';
+    document.getElementById('progress-bar').textContent = '';
     document.getElementById('progress-count').textContent = '';
     document.getElementById('log-box').textContent = '';
+    document.getElementById('progress-stats').style.display = 'none';
+    document.getElementById('stat-errors-wrap').style.display = 'none';
+    // Show cancel/stop buttons only in batch mode
+    const isBatch = mode === 'batch';
+    document.getElementById('btn-cancel-batch').style.display = isBatch ? '' : 'none';
+    document.getElementById('btn-stop-batch').style.display   = isBatch ? '' : 'none';
+    if (isBatch) document.getElementById('btn-batch').style.display = 'none';
+    // Tick elapsed timer
+    _progressTimer = setInterval(() => {
+      const el = document.getElementById('stat-elapsed');
+      if (el) el.textContent = _fmtDuration((Date.now() - _progressStart) / 1000);
+    }, 1000);
   }
 
   function hideProgress() {
+    clearInterval(_progressTimer);
     document.getElementById('progress-section').style.display = 'none';
+    document.getElementById('btn-cancel-batch').style.display = 'none';
+    document.getElementById('btn-stop-batch').style.display   = 'none';
+    document.getElementById('btn-batch').style.display        = '';
   }
 
-  function setProgress(current, total, label) {
+  async function cancelBatch() {
+    const btn = document.getElementById('btn-cancel-batch');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังยกเลิก…';
+    try {
+      await fetch(_ROOT+'/api/batch/cancel', { method: 'POST' });
+    } catch(e) { /* ignore */ }
+  }
+
+  function setThumbSize(btn) {
+    document.querySelectorAll('.thumb-size-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.body.dataset.thumbSize = btn.dataset.size;
+  }
+
+  function toggleHelp() {
+    const open = document.getElementById('help-drawer').classList.contains('open');
+    open ? closeHelp() : openHelp();
+  }
+  function openHelp() {
+    document.getElementById('help-drawer').classList.add('open');
+    document.getElementById('help-overlay').classList.add('open');
+  }
+  function closeHelp() {
+    document.getElementById('help-drawer').classList.remove('open');
+    document.getElementById('help-overlay').classList.remove('open');
+  }
+
+  function setProgress(current, total, label, extraStats = {}) {
     const pct = total ? Math.round(current / total * 100) : 0;
-    document.getElementById('progress-bar').style.width = pct + '%';
+    const bar = document.getElementById('progress-bar');
+    bar.style.width = pct + '%';
+    bar.textContent = pct > 8 ? pct + '%' : '';
+    // Color: green when done, yellow while running
+    bar.className = 'progress-bar progress-bar-striped' + (pct < 100 ? ' progress-bar-animated' : '');
+    bar.style.background = pct >= 100 ? '#198754' : '';
+
     document.getElementById('progress-label').textContent = label;
-    document.getElementById('progress-count').textContent = `${pct}%`;
+    document.getElementById('progress-count').textContent = total ? `${current} / ${total}` : '';
+
+    // Stats row (batch mode only)
+    if (_progressMode === 'batch' && total > 0) {
+      const statsEl = document.getElementById('progress-stats');
+      statsEl.style.display = '';
+      document.getElementById('stat-done').textContent      = extraStats.done      ?? current;
+      document.getElementById('stat-remaining').textContent = extraStats.remaining ?? (total - current);
+
+      const elapsedSec = (Date.now() - _progressStart) / 1000;
+      document.getElementById('stat-elapsed').textContent = _fmtDuration(elapsedSec);
+
+      // ETA
+      if (current > 0) {
+        const rate = current / elapsedSec; // items/sec
+        const etaSec = (total - current) / rate;
+        document.getElementById('stat-eta').textContent = _fmtDuration(etaSec);
+      }
+
+      // Errors
+      if ((extraStats.errors ?? 0) > 0) {
+        document.getElementById('stat-errors').textContent = extraStats.errors;
+        document.getElementById('stat-errors-wrap').style.display = '';
+      }
+    }
+
     loadStats();
     loadAssets();
   }
@@ -1018,6 +2070,25 @@
     box.scrollTop = box.scrollHeight;
   }
 
+  function showBatchToast(processed, errors, albumName) {
+    clearInterval(_progressTimer);
+    const body = document.getElementById('batch-toast-body');
+    const icon = errors ? '⚠️' : '✅';
+    const errPart = errors ? `<br><span class="text-danger">${errors} error — </span><a href="#" class="text-warning" onclick="setAlbumByName(${JSON.stringify(albumName)});document.getElementById('batch-toast').style.display='none'">ดูใน ${albumName || 'All Albums'}</a>` : '';
+    body.innerHTML = `${icon} <strong>AI Batch เสร็จแล้ว</strong> — ${processed} ภาพ ใช้เวลา ${_fmtDuration((Date.now()-_progressStart)/1000)}${errPart}
+      <br><a href="#" class="text-info" onclick="setAlbumByName(${JSON.stringify(albumName)});document.getElementById('batch-toast').style.display='none'">ดูผลลัพธ์</a>`;
+    document.getElementById('batch-toast').style.display = '';
+    // Auto-hide after 15s if no errors
+    if (!errors) setTimeout(() => { document.getElementById('batch-toast').style.display='none'; }, 15000);
+  }
+
+  function setAlbumByName(name) {
+    if (!name) return;
+    const pill = [...document.querySelectorAll('.album-pill')].find(p => p.dataset.album === name);
+    if (pill) setAlbumFilter(pill);
+    else { currentAlbumFilter = 'all'; loadAssets(); }
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────
   function esc(s) {
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1026,6 +2097,704 @@
   function badgeClass(status) {
     return { pending: 'badge-pending', processing: 'badge-processing', done: 'badge-done', error: 'badge-error' }[status] || 'bg-secondary';
   }
+
+  function showChangelog() {
+    new bootstrap.Modal(document.getElementById('changelogModal')).show();
+  }
+
+  async function backfillProxy() {
+    const btn = document.getElementById('btn-backfill');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลัง backfill...';
+    try {
+      const r = await fetch(_ROOT+'/api/assets/backfill-proxy', { method: 'POST' });
+      const d = await r.json();
+      alert(d.message || `อัพเดท proxy URL แล้ว ${d.updated} assets`);
+    } catch(e) {
+      alert('Error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-images me-1"></i>Backfill Proxy';
+      loadCacheStats();
+    }
+  }
+
+  // ── News Search ────────────────────────────────────────────────────────
+  async function searchNewsForModal() {
+    // Derive query from event name in current asset's ingest_path, or fallback to title
+    const btn = document.getElementById('news-search-btn');
+    const resultsDiv = document.getElementById('news-results');
+    const listDiv = document.getElementById('news-results-list');
+
+    // Build query: use AI title field + existing context text as hints
+    const title = document.getElementById('edit-ai-title')?.value || '';
+    const ctx   = document.getElementById('ctx-text')?.value || '';
+    const query = (ctx || title || '').replace(/\|/g,'+').trim().slice(0, 100);
+    if (!query) { alert('กรุณากรอก context หรือ AI Title ก่อน เพื่อให้ค้นหาได้ถูกต้อง'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังค้นข่าว...';
+    resultsDiv.style.display = 'none';
+
+    try {
+      const r = await fetch(`${_ROOT}/api/search-context?q=${encodeURIComponent(query)}`);
+      const d = await r.json();
+      if (!d.results?.length) {
+        listDiv.innerHTML = '<div class="text-secondary small">ไม่พบข่าวที่เกี่ยวข้อง — ลองปรับ context แล้วค้นใหม่</div>';
+      } else {
+        listDiv.innerHTML = d.results.map((item, i) => `
+          <div class="news-item border border-secondary rounded p-2" style="cursor:pointer;font-size:.78rem"
+               onclick="appendNewsContext(${JSON.stringify(item.snippet)}, ${JSON.stringify(item.title)})">
+            <div class="d-flex gap-2 align-items-start">
+              <i class="bi bi-newspaper text-info mt-1" style="flex-shrink:0"></i>
+              <div>
+                <div class="fw-semibold text-light">${esc(item.title)}</div>
+                <div class="text-secondary mt-1">${esc(item.snippet)}</div>
+                <div class="text-muted mt-1" style="font-size:.72rem">${esc(item.source)} · ${esc(item.pub?.slice(0,16)||'')}</div>
+              </div>
+            </div>
+          </div>`).join('');
+      }
+      resultsDiv.style.display = '';
+    } catch(e) {
+      listDiv.innerHTML = `<div class="text-danger small">Error: ${esc(e.message)}</div>`;
+      resultsDiv.style.display = '';
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-newspaper me-1"></i>ค้นข่าว';
+    }
+  }
+
+  function appendNewsContext(snippet, title) {
+    const ta = document.getElementById('ctx-text');
+    const existing = ta.value.trim();
+    const toAdd = title ? `${title}: ${snippet}` : snippet;
+    ta.value = existing ? existing + '\n' + toAdd : toAdd;
+    // Highlight the textarea briefly
+    ta.style.borderColor = '#0dcaf0';
+    setTimeout(() => { ta.style.borderColor = ''; }, 1000);
+  }
+
+  // ── Push by Album ──────────────────────────────────────────────────────
+  let _pushAlbumData = [];
+
+  async function openPushAlbumModal() {
+    const modal = new bootstrap.Modal(document.getElementById('pushAlbumModal'));
+    modal.show();
+    document.getElementById('push-album-loading').style.display = '';
+    document.getElementById('push-album-table-wrap').style.display = 'none';
+    document.getElementById('push-album-log-wrap').style.display = 'none';
+    document.getElementById('push-album-log').textContent = '';
+    document.getElementById('push-album-total-cost').textContent = '';
+
+    const r = await fetch(_ROOT+'/api/album-stats');
+    _pushAlbumData = await r.json();
+
+    renderPushAlbumTable();
+    document.getElementById('push-album-loading').style.display = 'none';
+    document.getElementById('push-album-table-wrap').style.display = '';
+  }
+
+  function renderPushAlbumTable() {
+    const tbody = document.getElementById('push-album-tbody');
+    let totalCostThb = 0;
+    tbody.innerHTML = _pushAlbumData.map(a => {
+      totalCostThb += a.cost_thb || 0;
+      const hasWork = a.done > 0;
+      return `<tr class="${hasWork ? '' : 'opacity-50'}">
+        <td><input type="checkbox" class="form-check-input push-album-check" data-album="${esc(a.name)}"
+             ${hasWork ? '' : 'disabled'} onchange="updatePushAlbumCount()"></td>
+        <td><span class="text-light">${esc(a.name)}</span>
+          ${a.error ? `<span class="badge bg-danger ms-1">${a.error} err</span>` : ''}
+          ${a.pending ? `<span class="badge bg-secondary ms-1">${a.pending} pending</span>` : ''}</td>
+        <td class="text-center text-success">${a.done}</td>
+        <td class="text-center text-secondary">${a.total}</td>
+        <td class="text-center text-danger">${a.error || 0}</td>
+        <td class="text-end text-secondary">${a.tokens_total ? (a.tokens_total/1000).toFixed(1)+'k' : '—'}</td>
+        <td class="text-end text-warning">${a.cost_thb ? '฿'+a.cost_thb.toFixed(2) : '—'}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('push-album-total-cost').textContent =
+      `รวมทั้งหมด: ฿${totalCostThb.toFixed(2)} THB`;
+  }
+
+  function pushAlbumSelectAll(val) {
+    document.querySelectorAll('.push-album-check:not(:disabled)').forEach(el => el.checked = val);
+    updatePushAlbumCount();
+  }
+
+  function updatePushAlbumCount() {
+    const checked = [...document.querySelectorAll('.push-album-check:checked')];
+    const totalDone = checked.reduce((sum, el) => {
+      const album = _pushAlbumData.find(a => a.name === el.dataset.album);
+      return sum + (album?.done || 0);
+    }, 0);
+    document.getElementById('push-album-selected-count').textContent =
+      checked.length ? `เลือก ${checked.length} album — ${totalDone} ภาพ` : 'ยังไม่เลือก';
+  }
+
+  async function startPushByAlbum() {
+    const checked = [...document.querySelectorAll('.push-album-check:checked')];
+    if (!checked.length) { alert('กรุณาเลือก album ก่อน'); return; }
+    const albumKeys = checked.map(el => el.dataset.album);
+
+    const btn = document.getElementById('push-album-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลัง Push...';
+
+    // Get item IDs for selected albums
+    const r = await fetch(_ROOT+'/api/push/by-album', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ album_keys: albumKeys }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.total) {
+      alert(d.detail || 'ไม่มีภาพที่พร้อม push (status=done) ในอัลบั้มที่เลือก');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-upload me-1"></i>Push Albums ที่เลือก';
+      return;
+    }
+
+    document.getElementById('push-album-log-wrap').style.display = '';
+    const logBox = document.getElementById('push-album-log');
+    logBox.textContent = '';
+    const bar = document.getElementById('push-album-bar');
+
+    // Build query string for SSE
+    const albumMap = encodeURIComponent(JSON.stringify(d.album_map));
+    const ids = d.item_ids.join(',');
+    const es = new EventSource(`/api/push/by-album/stream?item_ids=${encodeURIComponent(ids)}&album_map=${albumMap}`);
+    const albumLog = {}; // album → {ok, errors}
+
+    es.onmessage = ev => {
+      const msg = JSON.parse(ev.data);
+      const pct = msg.total ? Math.round((msg.ok_total + msg.errors) / msg.total * 100) : 0;
+      bar.style.width = pct + '%';
+      bar.textContent = pct > 8 ? pct + '%' : '';
+      document.getElementById('push-album-progress-txt').textContent =
+        `${msg.ok_total + msg.errors} / ${msg.total} — ${msg.ok_total} ok, ${msg.errors} errors`;
+
+      if (msg.type !== 'done') {
+        const icon = msg.ok ? '✓' : '✗';
+        logBox.textContent += `${icon} [${msg.album}] ${msg.item_id}${msg.ok ? '' : ' — '+msg.error}\n`;
+        logBox.scrollTop = logBox.scrollHeight;
+      } else {
+        // Final summary per album
+        bar.style.background = '#198754';
+        bar.className = 'progress-bar';
+        logBox.textContent += '\n── สรุปต่อ Album ──\n';
+        Object.entries(msg.album_stats || {}).forEach(([name, stat]) => {
+          logBox.textContent += `📁 ${name}: ${stat.ok} ok, ${stat.errors} errors\n`;
+        });
+        logBox.scrollTop = logBox.scrollHeight;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-upload me-1"></i>Push Albums ที่เลือก';
+        es.close();
+        loadStats(); loadAssets();
+      }
+    };
+    es.onerror = () => {
+      logBox.textContent += '✗ Stream error\n';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-upload me-1"></i>Push Albums ที่เลือก';
+      es.close();
+    };
+  }
 </script>
+
+<!-- ── Run AI Batch Modal ────────────────────────────────────────────────── -->
+<div class="modal fade" id="batchAlbumModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-stars me-2"></i>Run AI Batch — เลือก Album</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-secondary py-2 small mb-3" id="batch-album-summary">กำลังโหลด...</div>
+        <div class="d-flex gap-2 mb-2">
+          <button class="btn btn-outline-secondary btn-sm" onclick="batchAlbumSelectAll(true)">เลือกทั้งหมด</button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="batchAlbumSelectAll(false)">ยกเลิกทั้งหมด</button>
+        </div>
+        <table class="table table-sm table-borderless mb-0" id="batch-album-table">
+          <thead><tr>
+            <th style="width:36px"></th>
+            <th>Album / Event</th>
+            <th class="text-end" style="width:80px">Pending</th>
+            <th class="text-end" style="width:80px">Done</th>
+            <th class="text-end" style="width:80px">Total</th>
+          </tr></thead>
+          <tbody id="batch-album-tbody"></tbody>
+        </table>
+      </div>
+      <div class="modal-footer border-secondary justify-content-between">
+        <span class="small text-secondary" id="batch-album-count">เลือก 0 album</span>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">ยกเลิก</button>
+          <button class="btn btn-success btn-sm" id="batch-album-start-btn" onclick="startBatchFromModal()">
+            <i class="bi bi-stars me-1"></i>Start AI Batch
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Push by Album Modal ──────────────────────────────────────────────── -->
+<div class="modal fade" id="pushAlbumModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-collection me-2"></i>Push to Mimir — เลือก Album</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Album table -->
+        <div id="push-album-loading" class="text-secondary small text-center py-3">กำลังโหลด...</div>
+        <div id="push-album-table-wrap" style="display:none">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="d-flex gap-2">
+              <button class="btn btn-outline-secondary btn-sm" onclick="pushAlbumSelectAll(true)">เลือกทั้งหมด</button>
+              <button class="btn btn-outline-secondary btn-sm" onclick="pushAlbumSelectAll(false)">ยกเลิกทั้งหมด</button>
+            </div>
+            <span class="text-secondary small" id="push-album-selected-count">ยังไม่เลือก</span>
+          </div>
+          <table class="table table-sm table-hover mb-0" style="font-size:.82rem">
+            <thead class="table-dark">
+              <tr>
+                <th style="width:36px"></th>
+                <th>Album / Event</th>
+                <th class="text-center" style="width:70px">Done</th>
+                <th class="text-center" style="width:70px">Total</th>
+                <th class="text-center" style="width:70px">Error</th>
+                <th class="text-end" style="width:100px">Tokens</th>
+                <th class="text-end" style="width:90px">Cost (฿)</th>
+              </tr>
+            </thead>
+            <tbody id="push-album-tbody"></tbody>
+          </table>
+        </div>
+        <!-- Push log -->
+        <div id="push-album-log-wrap" class="mt-3" style="display:none">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="fw-semibold small">Push Log</span>
+            <span class="small text-secondary" id="push-album-progress-txt"></span>
+          </div>
+          <div class="progress mb-2" style="height:14px;border-radius:9px;background:#1a1a1a">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="push-album-bar" style="width:0%;border-radius:9px;font-size:.7rem;font-weight:600"></div>
+          </div>
+          <div class="log-box" id="push-album-log" style="max-height:200px"></div>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary justify-content-between">
+        <div class="small text-secondary" id="push-album-total-cost"></div>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">ปิด</button>
+          <button class="btn btn-info btn-sm" id="push-album-btn" onclick="startPushByAlbum()">
+            <i class="bi bi-upload me-1"></i>Push Albums ที่เลือก
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Changelog Modal ──────────────────────────────────────────────────── -->
+<div class="modal fade" id="changelogModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-journal-text me-2"></i>Changelog & Roadmap</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body small">
+
+        <!-- ROADMAP -->
+        <div class="mb-4">
+          <h6 class="text-warning mb-2"><i class="bi bi-map me-1"></i>Roadmap — AI Accuracy Improvements</h6>
+          <div class="ps-2 border-start border-warning">
+            <p class="mb-1 text-secondary" style="font-size:.75rem">แผนปรับปรุงความแม่นยำการวิเคราะห์ภาพ (เรียงตาม impact)</p>
+
+            <div class="mb-2">
+              <span class="badge bg-warning text-dark me-1">High Impact</span>
+              <strong>Cross-asset Context Sharing</strong>
+              <div class="text-secondary mt-1">ภาพจากงานเดียวกัน (path เดียวกัน) วิเคราะห์ภาพแรกก่อน แล้วนำผล (ชื่อคน, สถานที่, ชื่องาน) เป็น context อัตโนมัติให้ภาพที่เหลือในงานนั้น — ไม่ต้องพิมพ์ context เอง ชื่อคนและสถานที่สอดคล้องกันทุกภาพ</div>
+            </div>
+
+            <div class="mb-2">
+              <span class="badge bg-warning text-dark me-1">High Impact</span>
+              <strong>GPS → ชื่อสถานที่ (Reverse Geocoding)</strong>
+              <div class="text-secondary mt-1">ถ้า EXIF มี GPS coordinates แปลงเป็นชื่อสถานที่จริงผ่าน OpenStreetMap Nominatim (ฟรี) ก่อนส่งให้ AI — AI จะรู้ location แน่ชัดแทนการเดา</div>
+            </div>
+
+            <div class="mb-2">
+              <span class="badge bg-info text-dark me-1">Medium Impact</span>
+              <strong>Event Name Extraction จาก Path</strong>
+              <div class="text-secondary mt-1">Extract ชื่องานจาก ingest_path เป็น field แยกชัดๆ ใน prompt แทนที่จะฝังอยู่ใน path string ทั้งก้อน — AI อ่านชื่องานได้ถูกต้องขึ้น</div>
+            </div>
+
+            <div class="mb-2">
+              <span class="badge bg-secondary me-1">Low Impact</span>
+              <strong>ส่งภาพ Hi-res แทน Thumbnail</strong>
+              <div class="text-secondary mt-1">ดาวน์โหลดไฟล์จริงจาก Mimir แทน thumbnail — อ่านป้ายชื่อ, ใบหน้า, ตัวหนังสือในภาพได้ชัดขึ้น แต่ช้าและใช้ bandwidth มาก</div>
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-secondary">
+
+        <!-- CHANGELOG -->
+        <h6 class="text-light mb-2"><i class="bi bi-clock-history me-1"></i>Changelog</h6>
+
+        <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-primary">v0.8</span>
+            <span class="text-secondary" style="font-size:.75rem">2026-04-14</span>
+          </div>
+          <ul class="mb-0 ps-3 text-secondary">
+            <li><strong>Proxy image (Hi-res)</strong> — AI ส่ง proxy image (~1.4MB) แทน thumbnail (100KB) = ละเอียดขึ้น 13x อ่านป้าย/ใบหน้า/ตัวหนังสือในภาพได้ชัดขึ้นมาก</li>
+            <li>News search — ค้นข่าวจาก Google News RSS แล้วเพิ่มเป็น context ใน Re-analyze modal</li>
+            <li>Push by Album modal — เลือก album + checkbox + progress log + cost per album</li>
+            <li>Album Stats API — tokens/cost breakdown ต่อ event</li>
+          </ul>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-primary">v0.7</span>
+            <span class="text-secondary" style="font-size:.75rem">2026-04-14</span>
+          </div>
+          <ul class="mb-0 ps-3 text-secondary">
+            <li>Auto-discover Hires subfolders — paste URL ทั้งเดือน ระบบหา Hires folder เองอัตโนมัติ 2 levels deep</li>
+            <li>Album pills แยกตาม event name จาก ingest_path (ไม่ใช่แค่ folder_id)</li>
+            <li>Folder Context input — ใส่ context ต่อ folder ก่อน fetch ระบบจะ save ให้ asset อัตโนมัติ</li>
+            <li>Clear DB รีเซ็ต album pills, filter, selection ทั้งหมด</li>
+          </ul>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-primary">v0.6</span>
+            <span class="text-secondary" style="font-size:.75rem">2026-04-13</span>
+          </div>
+          <ul class="mb-0 ps-3 text-secondary">
+            <li>Re-analyze single asset โดยใส่ context เพิ่ม (textarea) — ผลกลับมาแสดงใน modal ทันที</li>
+            <li>Bulk Re-analyze — reset หลาย assets เป็น pending พร้อม context</li>
+            <li>Per-folder context text input ใน Folder URL grid</li>
+            <li>Sticky toolbar — แถบเครื่องมือค้างไว้ด้านบนเมื่อ scroll</li>
+            <li>Shift+click multi-select ในตาราง</li>
+          </ul>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-primary">v0.5</span>
+            <span class="text-secondary" style="font-size:.75rem">2026-04-12</span>
+          </div>
+          <ul class="mb-0 ps-3 text-secondary">
+            <li>แก้ Push ขึ้น Mimir — แยก required fields (title, description, createdOn) ออกจาก optional เพื่อป้องกัน HTTP 400</li>
+            <li>รองรับ Mimir key format ทั้ง <code>createdOn</code> และ <code>default_createdOn</code></li>
+            <li>Fix route ordering 405 — bulk-edit, bulk-reanalyze, bulk-push ต้องอยู่ก่อน /{item_id}</li>
+            <li>db.refresh(asset) หลัง commit ป้องกัน SQLAlchemy attribute expiry</li>
+          </ul>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-primary">v0.4</span>
+            <span class="text-secondary" style="font-size:.75rem">2026-04-11</span>
+          </div>
+          <ul class="mb-0 ps-3 text-secondary">
+            <li>ป้องกันชื่อช่างภาพเข้า title — strip PHOTOGRAPHER/&lt;name&gt;/ prefix ก่อนส่ง path ให้ AI</li>
+            <li>_set_if_empty() — ไม่เขียนทับ field ที่มีข้อมูลอยู่แล้ว</li>
+            <li>เพิ่ม 14 fields ใหม่ (emotion_mood, department, project_series, right_license ฯลฯ)</li>
+            <li>Multi-folder fetch — paste URL หลาย folder พร้อมกัน</li>
+            <li>Album bar pills กรองตาม folder</li>
+          </ul>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-secondary">v0.3</span>
+            <span class="text-secondary" style="font-size:.75rem">2026-04-10</span>
+          </div>
+          <ul class="mb-0 ps-3 text-secondary">
+            <li>รองรับ Claude (Haiku) และ Gemini Flash สลับผ่าน .env</li>
+            <li>Token tracking + cost estimation (USD/THB)</li>
+            <li>EXIF fetch — Artist, Camera, Copyright, ISO, Aperture, Shutter, Focal Length</li>
+            <li>Bulk Edit modal — แก้ category/photographer/rights หลาย asset พร้อมกัน</li>
+          </ul>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-secondary">v0.2</span>
+            <span class="text-secondary" style="font-size:.75rem">2026-04-09</span>
+          </div>
+          <ul class="mb-0 ps-3 text-secondary">
+            <li>Push metadata ขึ้น Mimir (/api/v1/items/{id} POST)</li>
+            <li>SSE streaming progress สำหรับ fetch, batch, push</li>
+            <li>Edit modal — แก้ไข AI fields ทีละรายการ</li>
+            <li>Stats cards (total/pending/done/error)</li>
+          </ul>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-secondary">v0.1</span>
+            <span class="text-secondary" style="font-size:.75rem">2026-04-08</span>
+          </div>
+          <ul class="mb-0 ps-3 text-secondary">
+            <li>Fetch assets จาก Mimir API (pagination)</li>
+            <li>SQLite DB + SQLAlchemy ORM</li>
+            <li>AI batch วิเคราะห์ภาพ → title, description, category, keywords</li>
+            <li>FastAPI + Jinja2 UI</li>
+          </ul>
+        </div>
+
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">ปิด</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ People Directory Modal ══════════════ -->
+<div class="modal fade" id="peopleModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h6 class="modal-title mb-0"><i class="bi bi-people me-2"></i>คลังบุคคล</h6>
+          <div class="text-secondary" style="font-size:.72rem">รูป reference สำหรับ AI ระบุใบหน้า — ใช้กับ Gemini เท่านั้น</div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <span class="text-secondary" style="font-size:.8rem" id="people-count">0 คน</span>
+          <button class="btn btn-sm btn-outline-light" onclick="openPersonForm()">
+            <i class="bi bi-plus-lg me-1"></i>เพิ่มบุคคล
+          </button>
+        </div>
+        <div id="people-grid" class="row g-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ Add/Edit Person Modal ══════════════ -->
+<div class="modal fade" id="personFormModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:480px">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title" id="person-form-title">เพิ่มบุคคล</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="person-id" value="">
+
+        <div class="mb-3">
+          <label class="form-label" style="font-size:.8rem;color:#aaa">ชื่อ-นามสกุล <span class="text-danger">*</span></label>
+          <input type="text" id="person-name" class="form-control form-control-sm field-edit" placeholder="เช่น เศรษฐา ทวีสิน">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" style="font-size:.8rem;color:#aaa">ตำแหน่ง</label>
+          <input type="text" id="person-title" class="form-control form-control-sm field-edit" placeholder="เช่น นายกรัฐมนตรี, นักร้อง">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" style="font-size:.8rem;color:#aaa">Keywords <span style="color:#555">(ใช้ match กับ event — คั่น comma)</span></label>
+          <input type="text" id="person-keywords" class="form-control form-control-sm field-edit" placeholder="เช่น เพื่อไทย, การเมือง, นักร้อง">
+          <div style="font-size:.72rem;color:#555;margin-top:4px">AI จะส่งรูปนี้ไปเปรียบใบหน้าเมื่อ event มี keyword ตรงกัน</div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label" style="font-size:.8rem;color:#aaa">รูป reference <span style="color:#555">(ใบหน้าชัด หน้าตรง)</span></label>
+          <div class="d-flex gap-3 align-items-start">
+            <div id="person-photo-preview" style="width:90px;height:90px;border:1px solid #333;border-radius:6px;background:#111;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden">
+              <i class="bi bi-person" style="font-size:2rem;color:#444"></i>
+            </div>
+            <div class="flex-grow-1">
+              <input type="file" id="person-photo-input" accept="image/*" class="form-control form-control-sm field-edit" onchange="handlePersonPhoto(this)">
+              <div style="font-size:.72rem;color:#555;margin-top:4px">JPG/PNG แนะนำ 400×400px ขึ้นไป</div>
+              <button id="person-photo-clear" class="btn btn-sm btn-outline-secondary mt-2" style="font-size:.72rem;display:none" onclick="clearPersonPhoto()">
+                <i class="bi bi-x me-1"></i>ลบรูป
+              </button>
+            </div>
+          </div>
+        </div>
+        <input type="hidden" id="person-photo-data" value="">
+        <input type="hidden" id="person-photo-mime" value="image/jpeg">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">ยกเลิก</button>
+        <button type="button" class="btn btn-light btn-sm" onclick="savePerson()">
+          <i class="bi bi-check2 me-1"></i>บันทึก
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Export CSV ───────────────────────────────────────────────────────────────
+
+function exportCsv(status) {
+  window.location.href = _ROOT + '/api/export/csv?status=' + status;
+}
+
+// ── People Directory ─────────────────────────────────────────────────────────
+
+let _peopleList = [];
+
+function openPeopleModal() {
+  loadPeople();
+  new bootstrap.Modal(document.getElementById('peopleModal')).show();
+}
+
+async function loadPeople() {
+  const grid = document.getElementById('people-grid');
+  grid.innerHTML = '<div class="text-secondary" style="font-size:.8rem">กำลังโหลด...</div>';
+  try {
+    const res  = await fetch(_ROOT + '/api/people');
+    _peopleList = await res.json();
+    renderPeopleGrid(_peopleList);
+  } catch(e) {
+    grid.innerHTML = '<div class="text-danger" style="font-size:.8rem">โหลดไม่ได้</div>';
+  }
+}
+
+function renderPeopleGrid(people) {
+  const grid = document.getElementById('people-grid');
+  document.getElementById('people-count').textContent = `${people.length} คน`;
+  if (!people.length) {
+    grid.innerHTML = '<div class="col-12 text-center text-secondary py-4" style="font-size:.85rem"><i class="bi bi-people" style="font-size:2rem;display:block;margin-bottom:8px;opacity:.3"></i>ยังไม่มีบุคคลในคลัง<br>กด "เพิ่มบุคคล" เพื่อเริ่มต้น</div>';
+    return;
+  }
+  grid.innerHTML = people.map(p => `
+    <div class="col-6 col-md-3 col-lg-2">
+      <div class="card h-100 p-2 text-center" style="cursor:default">
+        <div style="width:72px;height:72px;margin:0 auto 8px;border-radius:50%;overflow:hidden;border:1px solid #333;background:#111;display:flex;align-items:center;justify-content:center">
+          ${p.has_photo
+            ? `<img src="${_ROOT}/api/people/${p.id}/photo" style="width:72px;height:72px;object-fit:cover" onerror="this.parentElement.innerHTML='<i class=\\'bi bi-person\\' style=\\'font-size:1.8rem;color:#444\\'></i>'">`
+            : `<i class="bi bi-person" style="font-size:1.8rem;color:#444"></i>`}
+        </div>
+        <div style="font-size:.82rem;font-weight:600;line-height:1.3;margin-bottom:2px">${escHtml(p.name)}</div>
+        <div style="font-size:.72rem;color:#888;margin-bottom:6px;min-height:16px">${escHtml(p.title)}</div>
+        ${p.keywords ? `<div style="font-size:.68rem;color:#555;margin-bottom:8px">${escHtml(p.keywords)}</div>` : ''}
+        <div class="d-flex gap-1 justify-content-center mt-auto">
+          <button class="btn btn-sm btn-outline-secondary" style="font-size:.7rem;padding:.15rem .4rem" onclick="openPersonForm(${p.id})"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-sm btn-outline-danger"    style="font-size:.7rem;padding:.15rem .4rem" onclick="deletePerson(${p.id}, '${escHtml(p.name)}')"><i class="bi bi-trash3"></i></button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function openPersonForm(personId) {
+  const form    = document.getElementById('personFormModal');
+  const isEdit  = !!personId;
+  document.getElementById('person-form-title').textContent = isEdit ? 'แก้ไขบุคคล' : 'เพิ่มบุคคล';
+
+  // Reset
+  document.getElementById('person-id').value         = personId || '';
+  document.getElementById('person-name').value       = '';
+  document.getElementById('person-title').value      = '';
+  document.getElementById('person-keywords').value   = '';
+  document.getElementById('person-photo-data').value = '';
+  document.getElementById('person-photo-mime').value = 'image/jpeg';
+  document.getElementById('person-photo-input').value = '';
+  document.getElementById('person-photo-clear').style.display = 'none';
+  document.getElementById('person-photo-preview').innerHTML = '<i class="bi bi-person" style="font-size:2rem;color:#444"></i>';
+
+  if (isEdit) {
+    const p = _peopleList.find(x => x.id === personId);
+    if (p) {
+      document.getElementById('person-name').value     = p.name;
+      document.getElementById('person-title').value    = p.title;
+      document.getElementById('person-keywords').value = p.keywords;
+      if (p.has_photo) {
+        const url = _ROOT + '/api/people/' + p.id + '/photo';
+        document.getElementById('person-photo-preview').innerHTML = `<img src="${url}" style="width:90px;height:90px;object-fit:cover">`;
+        document.getElementById('person-photo-clear').style.display = '';
+      }
+    }
+  }
+
+  // Close people modal, open form modal
+  bootstrap.Modal.getInstance(document.getElementById('peopleModal'))?.hide();
+  setTimeout(() => new bootstrap.Modal(form).show(), 150);
+}
+
+function handlePersonPhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const dataUrl  = e.target.result;
+    const mime     = file.type || 'image/jpeg';
+    const b64      = dataUrl.split(',')[1];
+    document.getElementById('person-photo-data').value = b64;
+    document.getElementById('person-photo-mime').value = mime;
+    document.getElementById('person-photo-preview').innerHTML = `<img src="${dataUrl}" style="width:90px;height:90px;object-fit:cover;border-radius:4px">`;
+    document.getElementById('person-photo-clear').style.display = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearPersonPhoto() {
+  document.getElementById('person-photo-data').value = '';
+  document.getElementById('person-photo-input').value = '';
+  document.getElementById('person-photo-preview').innerHTML = '<i class="bi bi-person" style="font-size:2rem;color:#444"></i>';
+  document.getElementById('person-photo-clear').style.display = 'none';
+}
+
+async function savePerson() {
+  const name = document.getElementById('person-name').value.trim();
+  if (!name) { alert('กรุณาใส่ชื่อ'); return; }
+
+  const personId  = document.getElementById('person-id').value;
+  const photoData = document.getElementById('person-photo-data').value;
+  const photoMime = document.getElementById('person-photo-mime').value;
+
+  const body = {
+    name,
+    title:      document.getElementById('person-title').value.trim(),
+    keywords:   document.getElementById('person-keywords').value.trim(),
+    photo_mime: photoMime,
+  };
+
+  // Only send photo_data if changed (non-empty)
+  if (photoData) body.photo_data = photoData;
+
+  const url    = personId ? _ROOT + '/api/people/' + personId : _ROOT + '/api/people';
+  const method = personId ? 'PATCH' : 'POST';
+
+  try {
+    const res = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+    bootstrap.Modal.getInstance(document.getElementById('personFormModal'))?.hide();
+    // Re-open people list
+    setTimeout(() => openPeopleModal(), 200);
+  } catch(e) {
+    alert('บันทึกไม่ได้: ' + e.message);
+  }
+}
+
+async function deletePerson(id, name) {
+  if (!confirm(`ลบ "${name}" ออกจากคลังบุคคล?`)) return;
+  try {
+    await fetch(_ROOT + '/api/people/' + id, { method: 'DELETE' });
+    await loadPeople();
+  } catch(e) {
+    alert('ลบไม่ได้: ' + e.message);
+  }
+}
+
+function escHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+
 </body>
 </html>

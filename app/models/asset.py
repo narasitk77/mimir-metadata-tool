@@ -2,6 +2,23 @@ from sqlalchemy import Column, DateTime, Float, String, Text
 from app.database import Base
 
 
+def _extract_event(path: str) -> str:
+    """Lightweight duplicate of extract_event_from_path (avoids circular import)."""
+    import re
+    _SKIP = {"hires", "hi-res", "hi_res", "raw", "proxies", "proxy", "highres"}
+    parts = path.replace("\\", "/").split("/") if path else []
+    start = 2 if len(parts) >= 2 and parts[0].upper() == "PHOTOGRAPHER" else 0
+    best = ""
+    for seg in parts[start:]:
+        s = seg.strip()
+        if not s or s.upper() in {x.upper() for x in _SKIP} or len(s) <= 3:
+            continue
+        if " " in s or any("\u0E00" <= c <= "\u0E7F" for c in s):
+            return s
+        best = best or s
+    return best
+
+
 class Asset(Base):
     __tablename__ = "assets"
 
@@ -9,6 +26,9 @@ class Asset(Base):
     thumbnail_url = Column(String, default="")
     status = Column(String, default="pending")  # pending | processing | done | error
     error_log = Column(Text, default="")
+
+    # --- Source folder ---
+    folder_id = Column(String, default="", index=True)
 
     # --- From Mimir API ---
     title = Column(String, default="")
@@ -20,7 +40,8 @@ class Asset(Base):
     aspect_ratio = Column(String, default="")
     filesize_mb = Column(Float, nullable=True)
     ingest_path = Column(String, default="")
-    exif_url = Column(String, default="")  # exifTagsUrl จาก Mimir
+    exif_url = Column(String, default="")   # exifTagsUrl จาก Mimir
+    proxy_url = Column(String, default="")  # proxy image URL (1-2MB, better quality than thumbnail)
 
     # --- AI-generated (core) ---
     ai_title = Column(String, default="")
@@ -62,12 +83,17 @@ class Asset(Base):
     # --- Default ---
     rights = Column(String, default="THE STANDARD/All Rights Reserved")
 
+    # --- User-supplied context for re-analysis ---
+    context_urls = Column(Text, default="")   # JSON array of up to 5 URLs
+    context_text = Column(Text, default="")   # free-text hint
+
     def to_dict(self):
         return {
             "item_id": self.item_id,
             "thumbnail_url": self.thumbnail_url,
             "status": self.status,
             "error_log": self.error_log,
+            "folder_id": self.folder_id or "",
             # Mimir
             "title": self.title,
             "item_type": self.item_type,
@@ -79,6 +105,7 @@ class Asset(Base):
             "filesize_mb": self.filesize_mb,
             "ingest_path": self.ingest_path,
             "exif_url": self.exif_url,
+            "proxy_url": self.proxy_url or "",
             # AI core
             "ai_title": self.ai_title,
             "ai_description": self.ai_description,
@@ -113,4 +140,9 @@ class Asset(Base):
             "tokens_output": self.tokens_output,
             # Default
             "rights": self.rights,
+            # Context
+            "context_urls": self.context_urls or "",
+            "context_text": self.context_text or "",
+            # Derived
+            "album_key": _extract_event(self.ingest_path or ""),
         }

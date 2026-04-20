@@ -15,6 +15,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def _ensure_person_table():
+    """Create persons table if it doesn't exist (safe no-op if already exists)."""
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if "persons" not in inspector.get_table_names():
+        from app.models.person import Person  # noqa: F401 — registers with Base
+        Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["persons"]])
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -55,6 +64,13 @@ def run_migrations():
         ("exif_aperture",          "TEXT"),
         ("exif_shutter",           "TEXT"),
         ("exif_focal_length",      "TEXT"),
+        # User-supplied context for re-analysis
+        ("context_urls",           "TEXT"),
+        ("context_text",           "TEXT"),
+        # Source folder
+        ("folder_id",              "TEXT"),
+        # Proxy image (better quality than thumbnail for AI)
+        ("proxy_url",              "TEXT"),
     ]
     with engine.connect() as conn:
         for col, col_type in new_columns:
