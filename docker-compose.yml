@@ -28,7 +28,13 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-mimir}:${POSTGRES_PASSWORD:-mimir_secret}@postgres:5432/${POSTGRES_DB:-mimir_metadata}
       AI_PROVIDER: gemini
       MIMIR_BASE_URL: ${MIMIR_BASE_URL:-https://apac.mjoll.no}
-      MIMIR_TOKEN: ${MIMIR_TOKEN}
+      # Static token (expires ~1h) — leave empty and use Cognito SRP below for auto-refresh
+      MIMIR_TOKEN: ${MIMIR_TOKEN:-}
+      # Cognito SRP auth (preferred — token auto-refreshes every 55 min)
+      MIMIR_COGNITO_USER_POOL_ID: ${MIMIR_COGNITO_USER_POOL_ID:-}
+      MIMIR_COGNITO_CLIENT_ID: ${MIMIR_COGNITO_CLIENT_ID:-}
+      MIMIR_USERNAME: ${MIMIR_USERNAME:-}
+      MIMIR_PASSWORD: ${MIMIR_PASSWORD:-}
       FOLDER_ID: ${FOLDER_ID}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
