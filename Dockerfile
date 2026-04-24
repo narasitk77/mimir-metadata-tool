@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 FROM python:3.12-slim
 
 # Non-root user for security
-RUN groupadd --system app && useradd --system --gid app --no-create-home app
+RUN adduser --system --group --no-create-home app
 
 WORKDIR /app
 
