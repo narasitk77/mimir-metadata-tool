@@ -5,7 +5,7 @@ services:
     image: ghcr.io/narasitk77/mimir-metadata-tool:latest
     container_name: mimir-metadata-tool
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "${APP_PORT:-8001}:8000"
     volumes:
       - mimir_data:/app/data
     environment:
