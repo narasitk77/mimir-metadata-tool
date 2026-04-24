@@ -58,7 +58,12 @@ from app.controllers.gemini_controller import run_gemini_batch, _analyze_one as 
 from app.controllers.claude_controller import run_claude_batch, _analyze_one as _claude_analyze
 from app.controllers.mimir_controller import discover_hires_folders, extract_folder_id, fetch_all_items, push_metadata_to_mimir, _auth_header
 from app.controllers._shared import cache_stats, clear_image_cache, extract_event_from_path, extract_path_context
-from app.services.cognito_auth import force_refresh as _force_cognito_refresh
+from app.services.cognito_auth import (
+    force_refresh as _force_cognito_refresh,
+    login as _cognito_login,
+    logout as _cognito_logout,
+    get_status as _cognito_status,
+)
 
 import urllib.parse
 import xml.etree.ElementTree as _ET
@@ -121,14 +126,40 @@ async def reconnect_mimir():
     """Force a fresh Cognito authentication with Mimir."""
     if settings.MIMIR_TOKEN:
         return {"ok": True, "method": "static_token", "message": "Using static token — no refresh needed"}
-    if not settings.MIMIR_USERNAME:
-        raise HTTPException(status_code=400, detail="MIMIR_USERNAME not configured")
+    status = _cognito_status()
+    if not status["active"] and not status["env_fallback"]:
+        raise HTTPException(status_code=400, detail="No Mimir credentials — login first")
     try:
-        token = await _force_cognito_refresh()
+        await _force_cognito_refresh()
         return {"ok": True, "method": "cognito", "message": "Reconnected to Mimir successfully"}
     except Exception as e:
         logger.error(f"Mimir reconnect failed: {e}")
         raise HTTPException(status_code=502, detail=f"Reconnect failed: {e}")
+
+
+# ── API: Mimir runtime login (20-min session, credentials never persisted) ────
+
+class MimirLogin(BaseModel):
+    username: str
+    password: str
+
+@router.post("/api/mimir-auth/login")
+async def mimir_login(body: MimirLogin):
+    if not settings.MIMIR_COGNITO_USER_POOL_ID or not settings.MIMIR_COGNITO_CLIENT_ID:
+        raise HTTPException(status_code=400, detail="MIMIR_COGNITO_USER_POOL_ID / CLIENT_ID not configured in env")
+    try:
+        return await _cognito_login(body.username, body.password)
+    except Exception as e:
+        logger.warning(f"Mimir login failed for {body.username}: {e}")
+        raise HTTPException(status_code=401, detail=f"Login failed: {e}")
+
+@router.post("/api/mimir-auth/logout")
+async def mimir_logout():
+    return _cognito_logout()
+
+@router.get("/api/mimir-auth/status")
+async def mimir_auth_status():
+    return _cognito_status()
 
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────

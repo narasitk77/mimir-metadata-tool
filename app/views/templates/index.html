@@ -180,6 +180,9 @@
     <a href="{{ mimir_url }}" target="_blank" class="config-badge text-decoration-none">
       <i class="bi bi-box-arrow-up-right me-1"></i>Mimir
     </a>
+    <button id="btn-mimir-auth" class="btn btn-sm btn-outline-warning" onclick="openMimirLoginModal()" title="Mimir session (20 min)" style="padding:.2rem .6rem;font-size:.8rem">
+      <i class="bi bi-key me-1"></i><span id="mimir-auth-label">Login Mimir</span>
+    </button>
     <button class="btn btn-sm btn-outline-secondary" onclick="openPeopleModal()" title="คลังบุคคล" style="padding:.2rem .6rem;font-size:.8rem">
       <i class="bi bi-people me-1"></i>คลังบุคคล
     </button>
@@ -2794,7 +2797,101 @@ async function deletePerson(id, name) {
 function escHtml(s) {
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+// ── Mimir runtime login (20-min session, credentials NEVER persisted) ─────────
+function openMimirLoginModal() {
+  document.getElementById('mimir-login-modal').style.display = 'flex';
+  setTimeout(() => { document.getElementById('mimir-username')?.focus(); }, 50);
+}
+function closeMimirLoginModal() {
+  document.getElementById('mimir-login-modal').style.display = 'none';
+  document.getElementById('mimir-username').value = '';
+  document.getElementById('mimir-password').value = '';
+  document.getElementById('mimir-login-error').textContent = '';
+}
+async function submitMimirLogin(e) {
+  e?.preventDefault();
+  const u = document.getElementById('mimir-username').value.trim();
+  const p = document.getElementById('mimir-password').value;
+  const errBox = document.getElementById('mimir-login-error');
+  errBox.textContent = '';
+  if (!u || !p) { errBox.textContent = 'กรอก username / password'; return; }
+  const btn = document.getElementById('mimir-login-submit');
+  btn.disabled = true; btn.textContent = 'กำลังเข้าสู่ระบบ...';
+  try {
+    const r = await fetch(_ROOT + '/api/mimir-auth/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: u, password: p})
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.detail || r.statusText);
+    }
+    closeMimirLoginModal();
+    await refreshMimirAuthStatus();
+  } catch (err) {
+    errBox.textContent = String(err.message || err);
+  } finally {
+    btn.disabled = false; btn.textContent = 'เข้าสู่ระบบ';
+  }
+}
+async function mimirLogout() {
+  if (!confirm('ออกจากระบบ Mimir?')) return;
+  await fetch(_ROOT + '/api/mimir-auth/logout', {method: 'POST'});
+  await refreshMimirAuthStatus();
+}
+async function refreshMimirAuthStatus() {
+  try {
+    const r = await fetch(_ROOT + '/api/mimir-auth/status');
+    const s = await r.json();
+    const btn = document.getElementById('btn-mimir-auth');
+    const lbl = document.getElementById('mimir-auth-label');
+    if (s.active) {
+      const mm = Math.floor(s.expires_in_sec / 60);
+      const ss = s.expires_in_sec % 60;
+      lbl.textContent = `${s.username} · ${mm}:${String(ss).padStart(2,'0')}`;
+      btn.classList.remove('btn-outline-warning');
+      btn.classList.add('btn-outline-success');
+      btn.title = `Session expires in ${mm}m ${ss}s — click to logout`;
+      btn.onclick = mimirLogout;
+    } else {
+      lbl.textContent = 'Login Mimir';
+      btn.classList.remove('btn-outline-success');
+      btn.classList.add('btn-outline-warning');
+      btn.title = 'Mimir session (20 min)';
+      btn.onclick = openMimirLoginModal;
+    }
+  } catch(e) { /* silent */ }
+}
+setInterval(refreshMimirAuthStatus, 5000);
+document.addEventListener('DOMContentLoaded', refreshMimirAuthStatus);
 </script>
+
+<!-- Mimir Login Modal -->
+<div id="mimir-login-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#1a1a1a;border:1px solid #333;border-radius:10px;padding:24px 28px;width:380px;max-width:90vw">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h5 style="margin:0;font-size:1rem;font-weight:600"><i class="bi bi-key me-2 text-warning"></i>เข้าสู่ระบบ Mimir</h5>
+      <button class="btn btn-sm btn-outline-secondary" onclick="closeMimirLoginModal()" style="padding:.15rem .5rem;font-size:.8rem"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <form onsubmit="submitMimirLogin(event)">
+      <div class="mb-2">
+        <label class="form-label" style="font-size:.8rem;color:#aaa">Username (email)</label>
+        <input id="mimir-username" type="email" class="form-control form-control-sm" autocomplete="username" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" style="font-size:.8rem;color:#aaa">Password</label>
+        <input id="mimir-password" type="password" class="form-control form-control-sm" autocomplete="current-password" required>
+      </div>
+      <div id="mimir-login-error" style="color:#ff6b6b;font-size:.8rem;min-height:1em;margin-bottom:10px"></div>
+      <div style="font-size:.75rem;color:#888;line-height:1.4;margin-bottom:14px">
+        <i class="bi bi-shield-lock me-1 text-success"></i>Credentials เก็บใน memory เท่านั้น จะถูกลบอัตโนมัติทุก 20 นาที — ไม่บันทึกลง DB / disk / env
+      </div>
+      <button id="mimir-login-submit" type="submit" class="btn btn-warning btn-sm w-100">เข้าสู่ระบบ</button>
+    </form>
+  </div>
+</div>
 
 </body>
 </html>
