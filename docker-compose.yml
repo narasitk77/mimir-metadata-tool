@@ -1,11 +1,8 @@
-# Production / Portainer Stack
-# Deploy via: Portainer > Stacks > Add Stack > Repository
+# Production / Portainer Stack (Web Editor)
+# Pulls pre-built image from GHCR — no build context required
 services:
   mimir-tool:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: mimir-metadata-tool:latest
+    image: ghcr.io/narasitk77/mimir-metadata-tool:latest
     container_name: mimir-metadata-tool
     ports:
       - "${APP_PORT:-8000}:8000"
