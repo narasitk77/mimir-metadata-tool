@@ -1,6 +1,22 @@
 # Production / Portainer Stack (Web Editor)
-# Pulls pre-built image from GHCR — no build context required
+# Pulls pre-built image from GHCR — Postgres for persistent storage
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mimir-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mimir_metadata}
+      POSTGRES_USER: ${POSTGRES_USER:-mimir}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mimir_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mimir} -d ${POSTGRES_DB:-mimir_metadata}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   mimir-tool:
     image: ghcr.io/narasitk77/mimir-metadata-tool:latest
     container_name: mimir-metadata-tool
@@ -9,22 +25,29 @@ services:
     volumes:
       - mimir_data:/app/data
     environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mimir}:${POSTGRES_PASSWORD:-mimir_secret}@postgres:5432/${POSTGRES_DB:-mimir_metadata}
+      AI_PROVIDER: gemini
       MIMIR_BASE_URL: ${MIMIR_BASE_URL:-https://apac.mjoll.no}
       MIMIR_TOKEN: ${MIMIR_TOKEN}
       FOLDER_ID: ${FOLDER_ID}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       ITEMS_PER_PAGE: ${ITEMS_PER_PAGE:-100}
-      GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-4500}
+      GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-7000}
       BATCH_SIZE: ${BATCH_SIZE:-20}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/stats')"]
       interval: 30s
       timeout: 10s
-      start_period: 15s
+      start_period: 30s
       retries: 3
 
 volumes:
   mimir_data:
+    driver: local
+  postgres_data:
     driver: local
