@@ -3,7 +3,12 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     MIMIR_BASE_URL: str = "https://apac.mjoll.no"
-    MIMIR_TOKEN: str = ""
+    MIMIR_TOKEN: str = ""  # optional static token; if empty, uses Cognito SRP auth
+    # Cognito SRP auth (same as Node.js app — preferred over static token)
+    MIMIR_COGNITO_USER_POOL_ID: str = ""
+    MIMIR_COGNITO_CLIENT_ID: str = ""
+    MIMIR_USERNAME: str = ""
+    MIMIR_PASSWORD: str = ""
     FOLDER_ID: str = ""
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
@@ -23,6 +28,21 @@ class Settings(BaseSettings):
 
     # Sub-path when running behind a reverse proxy (e.g. "/ai-tool" — no trailing slash)
     APP_ROOT_PATH: str = ""
+
+    # Google Sheets integration — OAuth2 Web App
+    # Create OAuth2 credentials at console.cloud.google.com → APIs → Credentials
+    # Type: "Web application" — add redirect URI: {your-host}/ai-tool/api/sheets/callback
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+    GOOGLE_SHEET_ID: str = "1UelzdSNpwWfEkU7JThuhf0irTKPJk-1Pvhh1-eub6B0"
+    # Redirect URI registered in Google Cloud Console (must match exactly)
+    GOOGLE_REDIRECT_URI: str = "https://mimir-metadata-tool.onrender.com/api/sheets/callback"
+    # Legacy service account (kept for backward compat, not used)
+    GOOGLE_SERVICE_ACCOUNT_JSON: str = ""
+
+    # Qdrant Vector DB
+    QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_COLLECTION: str = "mimir_assets"
 
     class Config:
         env_file = ".env"

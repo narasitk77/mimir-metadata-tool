@@ -11,6 +11,7 @@ from sqlalchemy import func
 from app.config import settings
 from app.database import SessionLocal
 from app.models.asset import Asset
+from app.services.cognito_auth import get_token as _get_token
 from app.controllers._shared import (
     extract_event_from_path, extract_date_from_path, extract_path_context,
     fetch_best_image, parse_gps, reverse_geocode,
@@ -21,98 +22,52 @@ logger = logging.getLogger(__name__)
 
 
 PROMPT = """\
-You are a media metadata specialist for THE STANDARD, a Thai news and media company.
+You are a media metadata specialist for THE STANDARD (Thai news media).
 
-ข้อมูล Context ของไฟล์นี้:
-- ชื่อไฟล์เดิม: "{title}"
-- ชื่องาน/Event (จาก path): "{event_name}"
-- Path ในระบบ (ไม่รวมโฟลเดอร์ช่างภาพ): "{clean_path}"
-- ประเภทไฟล์: "{item_type}"
-- ช่างภาพ (จาก EXIF): "{exif_photographer}"
-- กล้อง (จาก EXIF): "{exif_camera_model}"
-- GPS Location: "{gps_location}"
+Context:
+- ไฟล์: "{title}"
+- Event: "{event_name}"
+- Path: "{clean_path}"
+- ประเภท: "{item_type}"
+- ช่างภาพ (EXIF): "{exif_photographer}"
+- กล้อง: "{exif_camera_model}"
+- GPS: "{gps_location}"
 
-หลักการสำคัญ: ระบุ "ใคร" ให้ครบ — ระวัง "ทำอะไร" อย่าเดา
-
-วิเคราะห์ภาพประกอบกับ Context แล้ว return ONLY a valid JSON object:
+Return ONLY a valid JSON object — no markdown, no explanation:
 
 {{
-  "title": "ชื่อกระชับภาษาไทย รูปแบบ YYYY.MM.DD_หัวข้อ_ชื่อบุคคลในภาพหรือแบรนด์ (ไม่ใช่ชื่อช่างภาพ)",
-  "description": "คำบรรยายใต้ภาพข่าวสำนักข่าว 1-3 ประโยค ภาษาไทย รูปแบบ: [ชื่อเต็ม ตำแหน่ง] [กริยา] [รายละเอียดที่เห็นในภาพ] ระหว่าง[ชื่องาน/โอกาส] ณ [สถานที่] เมื่อวันที่ [วัน เดือน ปี] — บรรยายเฉพาะข้อเท็จจริงที่ปรากฏในภาพและยืนยันได้จากข่าว ไม่ใส่ความเห็นหรือคำคุณศัพท์แสดงอารมณ์",
-  "category": "Photo หรือ Footage หรือ Audio หรือ Graphic หรือ Deliverable",
-  "subcat": "Portrait หรือ Event หรือ B-Roll หรือ Drone หรือ BTS หรือ Interview หรือ Press Conference หรือ Protest หรือ Document หรือ Product",
-  "editorial_categories": "Politics หรือ Business หรือ Entertainment หรือ Lifestyle หรือ Sport หรือ Tech หรือ World หรือ Environment หรือ Health",
-  "location": "สถานที่ถ่าย เช่น สวนลุมพินี กรุงเทพมหานคร หรือ The Standard ออฟฟิศ",
-  "persons": "ชื่อที่มีใน shared_context/ข่าว/context เท่านั้น — ห้ามเดาจากภาพ ถ้าไม่รู้ชื่อให้ใส่ตำแหน่ง เช่น นักการเมือง หรือปล่อยว่าง",
-  "event_occasion": "ชื่องานหรือโอกาสที่ถ่าย เช่น งานแถลงข่าว, พิธีมอบรางวัล",
-  "emotion_mood": "Happy หรือ Serious หรือ Tense หรือ Celebratory หรือ Neutral หรือ Sad",
-  "language": "Thai หรือ English หรือ Other",
-  "subject_tags": "แท็กหัวข้อคั่นด้วย comma เช่น การเมือง, เศรษฐกิจ, สิ่งแวดล้อม",
-  "visual_attributes": "ลักษณะภาพคั่นด้วย comma เช่น Wide shot, Close-up, Candid, Studio, Outdoor",
-  "episode_segment": "ชื่อ Episode หรือ Segment ถ้ามี (ดูจาก path/ชื่อไฟล์ ถ้าไม่มีให้ว่าง)",
-  "department": "แผนกที่เกี่ยวข้อง เช่น Editorial, Marketing, Social Media, Video (ดูจาก path)",
-  "project_series": "ชื่อโปรเจคหรือซีรีส์ (ดูจาก path/ชื่อไฟล์ ถ้าไม่มีให้ว่าง)",
-  "right_license": "THE STANDARD/All Rights Reserved (default ถ้าไม่มีข้อมูลอื่น)",
-  "deliverable_type": "ประเภทงาน เช่น Hero Image, Thumbnail, Social Post, Story, Archive",
-  "technical_tags": "แท็กเทคนิคคั่นด้วย comma เช่น RAW, HDR, Long Exposure, Flash (ถ้าไม่มีให้ว่าง)",
-  "keywords": ["คำ1", "คำ2", "คำ3", "คำ4", "คำ5"]
+  "title": "YYYY.MM.DD_หัวข้อ_ชื่อบุคคล/แบรนด์ที่เป็น subject (ห้ามใช้ชื่อช่างภาพ)",
+  "description": "คำบรรยายใต้ภาพข่าว 1 ประโยค รูปแบบ: [ชื่อเต็ม ตำแหน่ง] [กริยา] ณ [สถานที่]",
+  "category": "Photo | Footage | Audio | Graphic | Deliverable",
+  "subcat": "Portrait | Event | B-Roll | Drone | BTS | Interview | Press Conference | Protest | Document | Product",
+  "editorial_categories": "Politics | Business | Entertainment | Lifestyle | Sport | Tech | World | Environment | Health",
+  "location": "สถานที่ถ่าย",
+  "persons": "ชื่อจาก shared_context/ข่าว/context เท่านั้น — ห้ามเดาจากใบหน้า ไม่รู้ใส่ตำแหน่ง หรือว่าง",
+  "event_occasion": "ชื่องาน/โอกาส",
+  "emotion_mood": "Happy | Serious | Tense | Celebratory | Neutral | Sad",
+  "language": "Thai | English | Other",
+  "subject_tags": "แท็กหัวข้อคั่นด้วย comma",
+  "visual_attributes": "Wide shot, Close-up, Candid, Studio, Outdoor ฯลฯ คั่นด้วย comma",
+  "episode_segment": "ชื่อ Episode/Segment (จาก path หรือว่าง)",
+  "department": "Editorial | Marketing | Social Media | Video (จาก path)",
+  "project_series": "ชื่อ project/series (จาก path หรือว่าง)",
+  "right_license": "THE STANDARD/All Rights Reserved",
+  "deliverable_type": "Hero Image | Thumbnail | Social Post | Story | Archive",
+  "technical_tags": "RAW, HDR, Flash ฯลฯ คั่นด้วย comma (ว่างถ้าไม่มี)",
+  "keywords": ["คำ1","คำ2","คำ3","คำ4","คำ5"]
 }}
 
-กฎการระบุชื่อบุคคล (สำคัญ):
-- ใส่ชื่อใน persons เฉพาะเมื่อมีหลักฐานจาก shared_context, ข่าว, หรือ context ที่ user ให้มา
-- ห้ามเดาชื่อจากภาพ — Claude ไม่มี face recognition
-- ถ้าไม่มีชื่อใน context → ใส่ตำแหน่ง/บทบาทที่เห็นในภาพ เช่น "นักการเมือง", "นักธุรกิจ"
-- ถ้าไม่รู้เลย → ปล่อยว่าง
+กฎ description — สำคัญที่สุด:
+- Photo: 1 ประโยคสั้น "[ชื่อเต็ม ตำแหน่ง] [กริยา] ณ [สถานที่]" เช่น "เศรษฐา ทวีสิน นายกรัฐมนตรี ให้สัมภาษณ์สื่อมวลชน ณ ทำเนียบรัฐบาล"
+- Footage (thumbnail frame): มีคน → "[ชื่อ] [กริยาที่เห็น] [รายการ/สถานที่]" | B-Roll → ระบุสิ่งที่เห็นตรงๆ
+- ห้ามใส่วันที่ | ห้ามขึ้นต้นด้วย ภาพ/ฉาก/ในภาพ/ภาพนี้ | ห้ามใช้คำแสดงคุณค่า (สวยงาม, ยิ่งใหญ่, หรูหรา ฯลฯ)
+- ห้ามเดากิจกรรมจาก props: เห็นร่ม ≠ เล่นชายหาด, เห็นไมค์ ≠ แสดงคอนเสิร์ต — บรรยายเฉพาะ action ที่เห็นชัด (ยืน/นั่ง/พูด)
+- ใช้ภาษาไทยที่ถูกต้อง สะกดคำตามพจนานุกรมราชบัณฑิตยสภา
 
-กฎการใช้ข้อมูล (เรียงตามความน่าเชื่อถือ):
-1. shared_context (ข้อมูลจากภาพอื่นในงานเดียวกัน) — ชื่อคนที่ระบุมาแล้วในงานนี้
-2. ข่าวที่ค้นอัตโนมัติ — cross-reference ชื่อบุคคล ตำแหน่ง สถานที่
-3. บทความที่แนบมา — บริบทเพิ่มเติม
-4. หมายเหตุจากผู้ใช้ — hint จาก user
-5. ภาพ (visual) — สิ่งที่เห็น เช่น สถานที่ กิจกรรม บรรยากาศ (ไม่ใช่ชื่อคน)
-
-การ Cross-reference:
-- ถ้าข่าวระบุชื่อบุคคลในงานนี้ + shared_context บอกว่าคนนั้นอยู่ในภาพนี้ด้วย → ใส่ใน persons
-- ห้ามใส่ชื่อใน persons เพียงเพราะข่าวหรือ shared_context ระบุว่าคนนั้นอยู่ในงาน — ต้องมีหลักฐานว่าอยู่ในภาพนี้โดยตรง
-- ถ้าข่าวระบุชื่องาน/สถานที่ → ใช้ใน event_occasion และ location
-- ถ้าข่าวมีวันที่ → ใช้ยืนยัน/ปรับ title format YYYY.MM.DD
-
-กฎ description — เขียนตรงๆ ไม่มีอารัมภบท:
-
-ถ้า item_type เป็น Photo/ภาพนิ่ง:
-- รูปแบบ: "[ชื่อเต็ม ตำแหน่ง] [กริยา] [ชื่องาน/สถานที่]"
-- ประโยคเดียว ไม่เกิน 2 ประโยค
-- ตัวอย่าง: "เศรษฐา ทวีสิน นายกรัฐมนตรี ให้สัมภาษณ์สื่อมวลชน ณ ทำเนียบรัฐบาล กรุงเทพฯ"
-
-ถ้า item_type เป็น Footage/วิดีโอ:
-- ภาพที่เห็นคือ thumbnail frame เดียว — บรรยายเฉพาะสิ่งที่เห็นชัดเจนในเฟรมนั้น
-- มีคนในภาพ: "[ชื่อ] [กริยา ที่เห็นจริงๆ] [สถานที่/รายการ]" → ตัวอย่าง: "คุณธงชัย Noble นั่งสัมภาษณ์ รายการ The Secret Sauce"
-- ไม่มีคน (B-Roll): ระบุสิ่งที่เห็นตรงๆ → ตัวอย่าง: "ชายหาดและร่มบังแดดริมทะเล"
-- ชื่อรายการ (Program/Series จาก path) ต้องอยู่ใน description ไม่ใช่ใน keywords
-- ห้ามสรุปว่ากำลัง "ร่วมกิจกรรม", "เล่น X", "ทำ Y" ถ้าไม่เห็นชัดในภาพ — ให้บรรยาย action ที่เห็น (ยืน/เดิน/นั่ง) และสภาพแวดล้อมเท่านั้น
-- ห้ามอนุมานจาก props/background เช่น เห็นร่ม → ไม่ต้องบอกว่าเล่นชายหาด, เห็นไมค์ → ไม่ต้องบอกว่าแสดงคอนเสิร์ต
-
-กฎ subcat สำหรับ Footage:
-- เห็นคนนั่ง/ยืนพูด/ให้สัมภาษณ์ต่อกล้องหรือต่อคนนอกจอ → subcat = "Interview"
-- ภาพสถานที่/วัตถุ/บรรยากาศ ไม่มีคนเป็น subject หลัก → subcat = "B-Roll"
-- ภาพงาน event มีคนหลายคน → subcat = "Event"
-- บินโดรน → subcat = "Drone"
-
-กฎห้ามทุกกรณี (Anti-Hallucination):
-- ห้ามใส่วันที่ใน description (วันที่มีใน Creation date อยู่แล้ว)
-- ห้ามขึ้นต้น description ด้วย "ภาพ", "ฉาก", "ภาพแสดง", "ในภาพ", "ภาพนี้"
-- ห้ามใช้คำคุณศัพท์แสดงคุณค่า: สวยงาม, ยิ่งใหญ่, ประณีต, งดงาม, ทันสมัย, ร่วมสมัย, หรูหรา ฯลฯ
-- ห้ามเดา "กิจกรรม" จาก props/background — เห็นร่ม ≠ เล่นชายหาด, เห็นไมค์ ≠ แสดงคอนเสิร์ต
-- บรรยาย action ที่เห็นชัด (ยืน/นั่ง/เดิน/พูด) ถ้าไม่ชัดให้ระบุ posture แทน
-- ห้ามใส่ชื่อบุคคลที่ confidence ต่ำและไม่มีหลักฐานจาก context/ข่าว/shared_context
-
-กฎอื่น ๆ:
-- ถ้า "ชื่องาน/Event" ไม่ว่าง ให้ใช้เป็นข้อมูลหลักสำหรับ event_occasion และ title
-- ถ้า "GPS Location" ไม่ว่าง ให้ใช้เป็น location (อาจปรับชื่อให้อ่านง่าย)
-- title ท้ายด้วยชื่อบุคคลที่ปรากฏในภาพหรือแบรนด์ที่เป็น subject เท่านั้น ถ้าไม่รู้ชื่อให้ตัดออก
-- ห้ามนำชื่อช่างภาพ (ดูจาก "ช่างภาพ (จาก EXIF)" ด้านบน) มาใส่ใน title เด็ดขาด
-- keywords 5-10 คำ ครอบคลุมคน สถานที่ หัวข้อ และ action
-- Return JSON only ห้าม return อย่างอื่นเด็ดขาด\
+กฎ persons: ใส่เฉพาะชื่อที่มีหลักฐานจาก shared_context/ข่าว/context — ห้ามเดาจากใบหน้าในกรณีไม่แน่ใจ
+กฎ subcat (Footage): นั่ง/ยืนพูดต่อกล้อง → Interview | สถานที่/วัตถุ → B-Roll | งานหลายคน → Event | บินโดรน → Drone
+กฎ title: ลงท้ายด้วยชื่อบุคคล/แบรนด์ที่เป็น subject เท่านั้น ถ้าไม่รู้ชื่อให้ตัดออก ห้ามใช้ชื่อช่างภาพจาก EXIF
+กฎ cross-reference: ข่าว/shared_context ระบุชื่อ/สถานที่/วันที่ → ใช้ยืนยัน persons, location, title\
 """
 
 
@@ -269,7 +224,7 @@ async def _fetch_exif(client: httpx.AsyncClient, asset: Asset) -> dict:
     if not exif_url:
         r = await client.get(
             f"{settings.MIMIR_BASE_URL}/api/v1/items/{asset.item_id}",
-            headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+            headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN or await _get_token()}"},
             timeout=15,
         )
         if r.status_code == 200:
@@ -350,7 +305,7 @@ async def _analyze_one(client: httpx.AsyncClient, asset: Asset,
 
     # 3. Fetch best available image (proxy hi-res → thumbnail fallback)
     image_bytes, mime_type = await fetch_best_image(
-        client, asset, settings.MIMIR_BASE_URL, settings.MIMIR_TOKEN
+        client, asset, settings.MIMIR_BASE_URL
     )
     image_b64 = base64.b64encode(image_bytes).decode()
     # Claude accepts image/jpeg, image/png, image/gif, image/webp
@@ -438,7 +393,7 @@ async def _analyze_one(client: httpx.AsyncClient, asset: Asset,
     def _call_claude():
         return claude.messages.create(
             model=settings.ANTHROPIC_MODEL,
-            max_tokens=1024,
+            max_tokens=800,
             messages=[{
                 "role": "user",
                 "content": [
@@ -470,7 +425,7 @@ async def _analyze_one(client: httpx.AsyncClient, asset: Asset,
 
 async def run_claude_batch(album_keys: list = None, cancel_flag: dict = None) -> AsyncGenerator[dict, None]:
     """
-    album_keys: list of event names to process. None / [] = process all pending.
+    album_keys: list of folder_ids to process. None / [] = process all pending.
     """
     db = SessionLocal()
     # Auto-recover assets stuck in "processing" from a previous crashed run
@@ -481,16 +436,10 @@ async def run_claude_batch(album_keys: list = None, cancel_flag: dict = None) ->
         db.commit()
         logger.info(f"Auto-reset {len(stuck)} stuck 'processing' assets to pending")
 
-    pending_assets = (db.query(Asset)
-                      .filter(Asset.status == "pending")
-                      .order_by(Asset.ingest_path)
-                      .all())
-
-    # Filter by album_keys if provided
-    album_set = set(album_keys) if album_keys else None
-    if album_set:
-        pending_assets = [a for a in pending_assets
-                          if (extract_event_from_path(a.ingest_path or "") or "__ungrouped__") in album_set]
+    q = db.query(Asset).filter(Asset.status == "pending")
+    if album_keys:
+        q = q.filter(Asset.folder_id.in_(set(album_keys)))
+    pending_assets = q.order_by(Asset.ingest_path).all()
 
     # Group by event so cross-asset context sharing works within each event
     event_order: dict[str, list[str]] = {}
@@ -604,6 +553,12 @@ async def run_claude_batch(album_keys: list = None, cancel_flag: dict = None) ->
                 asset.status        = "done"
                 asset.error_log     = ""
                 db.commit()
+
+                try:
+                    from app.services import vector_service as _vs
+                    _vs.index_asset(asset)
+                except Exception as _ve:
+                    logger.warning(f"Vector index skipped for {asset.item_id[:8]}: {_ve}")
 
                 # Accumulate cross-asset cache for this event (merge, don't replace)
                 existing = event_cache.get(event, "")

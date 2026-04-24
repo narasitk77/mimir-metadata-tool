@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+from app.services.cognito_auth import get_token as _get_cognito_token
+from app.config import settings as _settings
 
 logger = logging.getLogger(__name__)
 
@@ -391,7 +393,7 @@ async def fetch_best_image(
     client: httpx.AsyncClient,
     asset,
     mimir_base_url: str,
-    mimir_token: str,
+    mimir_token: str = "",   # kept for compat — ignored; uses _auth_header() instead
 ) -> tuple[bytes, str]:
     """
     Return (jpeg_bytes, 'image/jpeg') for AI analysis.
@@ -438,9 +440,10 @@ async def fetch_best_image(
 
     async def _refresh_urls() -> tuple[str, str]:
         try:
+            _token = _settings.MIMIR_TOKEN or await _get_cognito_token()
             r = await client.get(
                 f"{mimir_base_url}/api/v1/items/{asset.item_id}",
-                headers={"x-mimir-cognito-id-token": f"Bearer {mimir_token}"},
+                headers={"x-mimir-cognito-id-token": f"Bearer {_token}"},
                 timeout=15,
             )
             if r.status_code == 200:

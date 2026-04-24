@@ -143,6 +143,6 @@ class Asset(Base):
             # Context
             "context_urls": self.context_urls or "",
             "context_text": self.context_text or "",
-            # Derived
-            "album_key": _extract_event(self.ingest_path or ""),
+            # Derived — folder_id is the canonical album identifier (one pill per fetch)
+            "album_key": self.folder_id or "",
         }

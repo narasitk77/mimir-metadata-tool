@@ -7,6 +7,16 @@ import httpx
 from app.config import settings
 from app.database import SessionLocal
 from app.models.asset import Asset
+from app.services.cognito_auth import get_token as _get_cognito_token
+
+
+async def _auth_header() -> dict:
+    """Return Mimir auth header, using static token or Cognito SRP."""
+    if settings.MIMIR_TOKEN:
+        token = settings.MIMIR_TOKEN
+    else:
+        token = await _get_cognito_token()
+    return {"x-mimir-cognito-id-token": f"Bearer {token}"}
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +127,7 @@ async def _list_subfolders(client: httpx.AsyncClient, folder_id: str) -> List[di
         resp = await client.get(
             f"{settings.MIMIR_BASE_URL}/api/v1/search",
             params=params,
-            headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+            headers=await _auth_header(),
         )
         if resp.status_code != 200:
             logger.warning(f"_list_subfolders HTTP {resp.status_code} for {folder_id}")
@@ -208,7 +218,7 @@ async def fetch_all_items(folder_id: Optional[str] = None, context_text: str = "
             resp = await client.get(
                 f"{settings.MIMIR_BASE_URL}/api/v1/search",
                 params=params,
-                headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+                headers=await _auth_header(),
             )
 
             if resp.status_code != 200:
@@ -312,7 +322,7 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.get(
                 f"{settings.MIMIR_BASE_URL}/api/v1/items/{item_id}",
-                headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+                headers=await _auth_header(),
             )
             if r.status_code != 200:
                 return {"ok": False, "error": f"Cannot fetch item: HTTP {r.status_code}"}
@@ -375,7 +385,7 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
             # Pattern: {"error":{"message":"Trying to set invalid value X for field: \"Y\""}}
             _invalid_pat = _re.compile(r'invalid value (.+?) for field', _re.IGNORECASE)
             headers = {
-                "x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}",
+                **(await _auth_header()),
                 "Content-Type": "application/json",
             }
             current_uuid = dict(uuid_fields)
@@ -390,7 +400,7 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
                 }
                 resp = await client.post(
                     f"{settings.MIMIR_BASE_URL}/api/v1/items/{item_id}",
-                    json={"metadata": {"formId": "Common", "formData": formdata}},
+                    json={"metadata": {"formId": "default", "formData": formdata}},
                     headers=headers,
                 )
                 if resp.status_code == 200:

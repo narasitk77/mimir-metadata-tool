@@ -1,6 +1,4 @@
 import asyncio
-import csv
-import io
 import json
 import logging
 import re as _re
@@ -58,8 +56,9 @@ class BulkReanalyzeRequest(BaseModel):
 from app.config import settings
 from app.controllers.gemini_controller import run_gemini_batch, _analyze_one as _gemini_analyze
 from app.controllers.claude_controller import run_claude_batch, _analyze_one as _claude_analyze
-from app.controllers.mimir_controller import discover_hires_folders, extract_folder_id, fetch_all_items, push_metadata_to_mimir
+from app.controllers.mimir_controller import discover_hires_folders, extract_folder_id, fetch_all_items, push_metadata_to_mimir, _auth_header
 from app.controllers._shared import cache_stats, clear_image_cache, extract_event_from_path, extract_path_context
+from app.services.cognito_auth import force_refresh as _force_cognito_refresh
 
 import urllib.parse
 import xml.etree.ElementTree as _ET
@@ -113,6 +112,23 @@ async def get_stats(db: Session = Depends(get_db)):
         "fetch_running": _running["fetch"],
         "batch_running": _running["batch"],
     }
+
+
+# ── API: Mimir reconnect (force new Cognito token) ────────────────────────────
+
+@router.post("/api/reconnect")
+async def reconnect_mimir():
+    """Force a fresh Cognito authentication with Mimir."""
+    if settings.MIMIR_TOKEN:
+        return {"ok": True, "method": "static_token", "message": "Using static token — no refresh needed"}
+    if not settings.MIMIR_USERNAME:
+        raise HTTPException(status_code=400, detail="MIMIR_USERNAME not configured")
+    try:
+        token = await _force_cognito_refresh()
+        return {"ok": True, "method": "cognito", "message": "Reconnected to Mimir successfully"}
+    except Exception as e:
+        logger.error(f"Mimir reconnect failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Reconnect failed: {e}")
 
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────
@@ -203,20 +219,24 @@ async def get_token_stats(db: Session = Depends(get_db)):
 @router.get("/api/folders")
 async def list_folders(db: Session = Depends(get_db)):
     """
-    Return albums grouped by event name extracted from ingest_path.
-    Each unique event = one album pill, even if they share the same folder_id.
+    Return albums grouped by folder_id so each fetched folder URL = one album pill.
     """
-    rows = db.query(Asset.ingest_path).filter(Asset.ingest_path != "").all()
+    rows = db.query(Asset.folder_id, Asset.ingest_path, Asset.context_text).all()
 
-    counts: dict[str, int] = {}
-    for (path,) in rows:
-        key = extract_event_from_path(path) or "—"
-        counts[key] = counts.get(key, 0) + 1
+    folders: dict[str, dict] = {}
+    for folder_id, path, ctx_text in rows:
+        fid = folder_id or "__unknown__"
+        if fid not in folders:
+            event_name = extract_event_from_path(path or "") or (ctx_text or "").split("\n")[0][:40] or fid[:8]
+            folders[fid] = {
+                "name": event_name,
+                "album_key": fid,
+                "count": 0,
+                "context_text": ctx_text or "",
+            }
+        folders[fid]["count"] += 1
 
-    result = sorted(
-        [{"name": name, "album_key": name, "count": cnt} for name, cnt in counts.items()],
-        key=lambda x: x["name"],
-    )
+    result = sorted(folders.values(), key=lambda x: x["name"])
     return result
 
 
@@ -235,8 +255,7 @@ async def list_assets(
     if folder_id != "all":
         q = q.filter(Asset.folder_id == folder_id)
     if album_key != "all":
-        # Filter by event name segment within ingest_path
-        q = q.filter(Asset.ingest_path.contains(album_key))
+        q = q.filter(Asset.folder_id == album_key)
     total = q.count()
     assets = q.offset((page - 1) * per_page).limit(per_page).all()
     return {
@@ -251,6 +270,9 @@ async def list_assets(
 async def clear_assets(db: Session = Depends(get_db)):
     if _running["fetch"] or _running["batch"]:
         raise HTTPException(status_code=409, detail="Cannot clear while a task is running")
+    # Auto-save report snapshot before deleting so history is never lost
+    if db.query(Asset).filter(Asset.status == "done").count() > 0:
+        await _save_report_snapshot(db)
     count = db.query(Asset).count()
     db.query(Asset).delete()
     db.commit()
@@ -424,24 +446,26 @@ async def get_report(db: Session = Depends(get_db)):
 
 @router.get("/api/album-stats")
 async def album_stats(db: Session = Depends(get_db)):
-    """Return per-album stats: count, done, tokens, cost."""
-    from sqlalchemy import func
+    """Return per-album stats grouped by folder_id."""
     price_in, price_out = _get_pricing()
 
     rows = db.query(
+        Asset.folder_id,
         Asset.ingest_path,
+        Asset.context_text,
         Asset.status,
         Asset.tokens_input,
         Asset.tokens_output,
     ).all()
 
     albums: dict[str, dict] = {}
-    for path, status, ti, to in rows:
-        key = extract_event_from_path(path or "") or "—"
-        if key not in albums:
-            albums[key] = {"name": key, "total": 0, "done": 0, "pending": 0, "error": 0,
+    for folder_id, path, ctx_text, status, ti, to in rows:
+        fid = folder_id or "__unknown__"
+        if fid not in albums:
+            name = extract_event_from_path(path or "") or (ctx_text or "").split("\n")[0][:40] or fid[:8]
+            albums[fid] = {"name": name, "album_key": fid, "total": 0, "done": 0, "pending": 0, "error": 0,
                            "tokens_in": 0.0, "tokens_out": 0.0}
-        a = albums[key]
+        a = albums[fid]
         a["total"] += 1
         if status == "done":
             a["done"] += 1
@@ -470,19 +494,18 @@ class PushAlbumRequest(BaseModel):
 
 @router.post("/api/push/by-album")
 async def push_by_album(body: PushAlbumRequest, db: Session = Depends(get_db)):
-    """Push all done assets in selected albums."""
+    """Push all done assets in selected albums (album_keys = folder_ids)."""
     if not body.album_keys:
         raise HTTPException(status_code=400, detail="album_keys is empty")
 
-    # Collect done asset IDs that belong to selected albums
-    all_done = db.query(Asset).filter(Asset.status == "done").all()
-    selected: list[tuple[str, str]] = []  # (item_id, album_key)
-    for asset in all_done:
-        key = extract_event_from_path(asset.ingest_path or "") or "—"
-        if key in body.album_keys:
-            selected.append((asset.item_id, key))
+    key_set = set(body.album_keys)
+    all_done = db.query(Asset).filter(
+        Asset.status == "done",
+        Asset.folder_id.in_(key_set),
+    ).all()
+    selected = [(a.item_id, a.folder_id) for a in all_done]
     return {"ok": True, "total": len(selected), "item_ids": [s[0] for s in selected],
-            "album_map": {k: v for k, v in selected}}
+            "album_map": {s[0]: s[1] for s in selected}}
 
 
 @router.get("/api/push/by-album/stream")
@@ -607,7 +630,7 @@ async def proxy_image(item_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="No image URL")
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(url,
-            headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+            headers=await _auth_header(),
             follow_redirects=True)
         if r.status_code != 200:
             raise HTTPException(status_code=r.status_code, detail="Image fetch failed")
@@ -635,7 +658,7 @@ async def stream_video(item_id: str, db: Session = Depends(get_db)):
         async with httpx.AsyncClient() as client:
             async with client.stream(
                 "GET", url,
-                headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+                headers=await _auth_header(),
                 timeout=120,
             ) as r:
                 async for chunk in r.aiter_bytes(65536):
@@ -740,6 +763,10 @@ async def reanalyze_asset(item_id: str, body: ReanalyzeRequest, db: Session = De
         asset.error_log              = ""
         db.commit()
         db.refresh(asset)
+        try:
+            _vs.index_asset(asset)
+        except Exception as ve:
+            logger.warning(f"Vector index skipped for {item_id}: {ve}")
         return {"ok": True, "asset": asset.to_dict()}
     except Exception as exc:
         logger.error(f"Reanalyze error for {item_id}: {exc}", exc_info=True)
@@ -764,8 +791,8 @@ async def start_fetch(body: FetchRequest):
     global _active_folder_ids, _active_folder_contexts
     if _running["fetch"]:
         raise HTTPException(status_code=409, detail="Fetch already running")
-    if not settings.MIMIR_TOKEN:
-        raise HTTPException(status_code=400, detail="MIMIR_TOKEN not set")
+    if not settings.MIMIR_TOKEN and not settings.MIMIR_USERNAME:
+        raise HTTPException(status_code=400, detail="MIMIR_TOKEN or MIMIR_USERNAME/PASSWORD not set")
     if not body.folder_urls:
         raise HTTPException(status_code=400, detail="No folder URLs provided")
 
@@ -845,7 +872,7 @@ async def backfill_proxy(db: Session = Depends(get_db)):
             try:
                 r = await client.get(
                     f"{settings.MIMIR_BASE_URL}/api/v1/items/{asset.item_id}",
-                    headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+                    headers=await _auth_header(),
                 )
                 if r.status_code == 200:
                     data = r.json()
@@ -858,6 +885,74 @@ async def backfill_proxy(db: Session = Depends(get_db)):
         db.commit()
 
     return {"ok": True, "updated": updated, "total_missing": len(missing)}
+
+
+# ── API: Import individual Mimir items by URL ──────────────────────────────────
+
+_ITEM_UUID_RE = _re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', _re.I)
+
+class ImportItemsRequest(BaseModel):
+    item_urls: List[str]
+    context_text: str = ""
+
+
+@router.post("/api/items/import")
+async def import_items(body: ImportItemsRequest, db: Session = Depends(get_db)):
+    """Import individual Mimir item URLs (or raw item IDs) into the DB as pending."""
+    results = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        for raw_url in body.item_urls:
+            url = raw_url.strip()
+            if not url:
+                continue
+            m = _ITEM_UUID_RE.search(url)
+            if not m:
+                results.append({"url": url, "ok": False, "error": "No item ID (UUID) found"})
+                continue
+            item_id = m.group(0)
+
+            existing = db.query(Asset).filter(Asset.item_id == item_id).first()
+            if existing:
+                results.append({"url": url, "item_id": item_id, "ok": True, "status": "already_exists"})
+                continue
+
+            r = await client.get(
+                f"{settings.MIMIR_BASE_URL}/api/v1/items/{item_id}",
+                headers=await _auth_header(),
+                follow_redirects=True,
+            )
+            if r.status_code != 200:
+                results.append({"url": url, "item_id": item_id, "ok": False, "error": f"Mimir HTTP {r.status_code}"})
+                continue
+
+            item = r.json()
+            fd  = item.get("metadata", {}).get("formData", {})
+            tfd = item.get("technicalMetadata", {}).get("formData", {})
+            db.add(Asset(
+                item_id=item_id,
+                folder_id="__imported__",
+                thumbnail_url=item.get("thumbnail", ""),
+                proxy_url=item.get("proxy", ""),
+                status="pending",
+                title=fd.get("title") or item.get("originalFileName", ""),
+                item_type=item.get("itemType", ""),
+                media_created_on=fd.get("mediaCreatedOn") or fd.get("createdOn", ""),
+                file_type=tfd.get("technical_image_file_type") or item.get("mediaType", ""),
+                width=str(tfd.get("technical_image_width", "")),
+                height=str(tfd.get("technical_image_height", "")),
+                aspect_ratio=tfd.get("technical_media_display_aspect_ratio", ""),
+                filesize_mb=round(item["mediaSize"] / 1048576, 2) if item.get("mediaSize") else None,
+                ingest_path=item.get("ingestSourceFullPath", ""),
+                exif_url=item.get("exifTagsUrl", ""),
+                rights="THE STANDARD/All Rights Reserved",
+                context_text=body.context_text,
+            ))
+            results.append({"url": url, "item_id": item_id, "ok": True, "status": "imported"})
+
+        db.commit()
+
+    imported = sum(1 for r in results if r.get("status") == "imported")
+    return {"ok": True, "imported": imported, "results": results}
 
 
 # ── API: AI Batch (SSE) — รองรับ Gemini และ Claude ────────────────────────────
@@ -900,6 +995,133 @@ async def cancel_batch():
     return {"ok": True, "message": "Cancel signal sent"}
 
 
+_REPORTS_DIR = Path(__file__).parent.parent.parent / "data" / "reports"
+_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+async def _save_report_snapshot(db_session) -> Optional[str]:
+    """Save current report as JSON to data/reports/. Returns filename or None on error."""
+    from sqlalchemy import func, case as _case
+    try:
+        price_in, price_out = _get_pricing()
+        provider = settings.AI_PROVIDER.lower()
+        model = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
+
+        row = db_session.query(
+            func.count(Asset.item_id).label("total"),
+            func.sum(_case((Asset.status == "done",    1), else_=0)).label("done"),
+            func.sum(_case((Asset.status == "pending", 1), else_=0)).label("pending"),
+            func.sum(_case((Asset.status == "error",   1), else_=0)).label("error"),
+            func.sum(Asset.tokens_input).label("tokens_in"),
+            func.sum(Asset.tokens_output).label("tokens_out"),
+            func.min(Asset.processed_at).label("first_at"),
+            func.max(Asset.processed_at).label("last_at"),
+        ).first()
+
+        total_in  = row.tokens_in  or 0
+        total_out = row.tokens_out or 0
+        cost_usd  = (total_in / 1e6) * price_in + (total_out / 1e6) * price_out
+        elapsed_sec = None
+        if row.first_at and row.last_at:
+            elapsed_sec = int((row.last_at - row.first_at).total_seconds())
+
+        rows = db_session.query(
+            Asset.ingest_path, Asset.status,
+            Asset.tokens_input, Asset.tokens_output, Asset.processed_at,
+        ).all()
+
+        albums: dict = {}
+        day_map: dict = {}
+        for path, status, ti, to, proc_at in rows:
+            key = extract_event_from_path(path or "") or "—"
+            if key not in albums:
+                albums[key] = {"folder": key, "total": 0, "done": 0, "error": 0,
+                               "tokens_in": 0.0, "tokens_out": 0.0}
+            a = albums[key]
+            a["total"] += 1
+            if status == "done":
+                a["done"] += 1
+                a["tokens_in"]  += ti or 0
+                a["tokens_out"] += to or 0
+            elif status == "error":
+                a["error"] += 1
+            if proc_at and status == "done":
+                day = proc_at.strftime("%Y-%m-%d")
+                if day not in day_map:
+                    day_map[day] = {"date": day, "done": 0, "tokens": 0, "cost_usd": 0.0}
+                day_map[day]["done"] += 1
+                day_map[day]["tokens"] += int((ti or 0) + (to or 0))
+                day_map[day]["cost_usd"] = round(
+                    day_map[day]["cost_usd"]
+                    + ((ti or 0) / 1e6) * price_in
+                    + ((to or 0) / 1e6) * price_out, 6)
+
+        by_folder = []
+        for a in sorted(albums.values(), key=lambda x: x["folder"]):
+            c = (a["tokens_in"] / 1e6) * price_in + (a["tokens_out"] / 1e6) * price_out
+            by_folder.append({
+                "folder": a["folder"], "total": a["total"],
+                "done": a["done"], "error": a["error"],
+                "tokens_total": int(a["tokens_in"] + a["tokens_out"]),
+                "cost_usd": round(c, 5), "cost_thb": round(c * 34, 3),
+            })
+
+        by_day = []
+        for d in sorted(day_map.values(), key=lambda x: x["date"], reverse=True)[:60]:
+            d["cost_thb"] = round(d["cost_usd"] * 34, 4)
+            by_day.append(d)
+
+        report = {
+            "generated_at": datetime.utcnow().isoformat(),
+            "provider": provider,
+            "model": model,
+            "price_input_per_m":  price_in,
+            "price_output_per_m": price_out,
+            "summary": {
+                "total_assets":    row.total   or 0,
+                "total_done":      row.done    or 0,
+                "total_pending":   row.pending or 0,
+                "total_error":     row.error   or 0,
+                "total_folders":   len(albums),
+                "tokens_in":       int(total_in),
+                "tokens_out":      int(total_out),
+                "tokens_total":    int(total_in + total_out),
+                "cost_usd":        round(cost_usd, 5),
+                "cost_thb":        round(cost_usd * 34, 4),
+                "first_processed": row.first_at.isoformat() if row.first_at else None,
+                "last_processed":  row.last_at.isoformat()  if row.last_at  else None,
+                "elapsed_sec":     elapsed_sec,
+            },
+            "by_folder": by_folder,
+            "by_day": by_day,
+        }
+
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        filename = f"report_{ts}.json"
+        (_REPORTS_DIR / filename).write_text(json.dumps(report, ensure_ascii=False, indent=2))
+        logger.info(f"Report saved: {filename}")
+
+        # Push to Google Sheets if authenticated
+        from app.services.sheets_service import is_connected, push_report_to_sheets
+        if is_connected():
+            import asyncio as _asyncio
+            try:
+                sheets_result = await _asyncio.get_event_loop().run_in_executor(
+                    None, push_report_to_sheets, report
+                )
+                if sheets_result.get("ok"):
+                    logger.info(f"Report pushed to Sheets: {sheets_result.get('url')}")
+                else:
+                    logger.warning(f"Sheets push failed: {sheets_result.get('error')}")
+            except Exception as se:
+                logger.warning(f"Sheets push error: {se}")
+
+        return filename
+    except Exception as e:
+        logger.warning(f"Report auto-save failed: {e}")
+        return None
+
+
 @router.get("/api/batch/stream")
 async def batch_stream():
     provider = settings.AI_PROVIDER.lower()
@@ -913,6 +1135,14 @@ async def batch_stream():
                 # Reset flag before yielding done so next POST /api/batch doesn't get 409
                 if event.get("type") in ("done", "rate_limit", "cancelled"):
                     _running["batch"] = False
+                if event.get("type") == "done":
+                    db = SessionLocal()
+                    try:
+                        fname = await _save_report_snapshot(db)
+                        if fname:
+                            event["report_saved"] = fname
+                    finally:
+                        db.close()
                 yield f"data: {json.dumps(event)}\n\n"
                 await asyncio.sleep(0)
                 if event.get("type") in ("rate_limit", "cancelled"):
@@ -927,6 +1157,239 @@ async def batch_stream():
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+
+
+# ── API: CSV export ───────────────────────────────────────────────────────────
+
+@router.get("/api/report/export.csv")
+async def export_report_csv(db: Session = Depends(get_db)):
+    """Export full report as CSV — Summary + by_folder + by_day in one file."""
+    import csv, io
+    from fastapi.responses import StreamingResponse as _SR
+    from sqlalchemy import func, case as _case
+
+    price_in, price_out = _get_pricing()
+    provider = settings.AI_PROVIDER.lower()
+    model = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
+
+    row = db.query(
+        func.count(Asset.item_id).label("total"),
+        func.sum(_case((Asset.status == "done",    1), else_=0)).label("done"),
+        func.sum(_case((Asset.status == "pending", 1), else_=0)).label("pending"),
+        func.sum(_case((Asset.status == "error",   1), else_=0)).label("error"),
+        func.sum(Asset.tokens_input).label("tokens_in"),
+        func.sum(Asset.tokens_output).label("tokens_out"),
+        func.min(Asset.processed_at).label("first_at"),
+        func.max(Asset.processed_at).label("last_at"),
+    ).first()
+
+    rows = db.query(Asset.ingest_path, Asset.status,
+                    Asset.tokens_input, Asset.tokens_output, Asset.processed_at).all()
+
+    albums: dict = {}
+    day_map: dict = {}
+    for path, status, ti, to, proc_at in rows:
+        key = extract_event_from_path(path or "") or "—"
+        if key not in albums:
+            albums[key] = {"folder": key, "total": 0, "done": 0, "error": 0,
+                           "tokens_in": 0.0, "tokens_out": 0.0}
+        albums[key]["total"] += 1
+        if status == "done":
+            albums[key]["done"] += 1
+            albums[key]["tokens_in"]  += ti or 0
+            albums[key]["tokens_out"] += to or 0
+        elif status == "error":
+            albums[key]["error"] += 1
+        if proc_at and status == "done":
+            day = proc_at.strftime("%Y-%m-%d")
+            if day not in day_map:
+                day_map[day] = {"date": day, "done": 0, "tokens": 0, "cost_usd": 0.0}
+            day_map[day]["done"] += 1
+            day_map[day]["tokens"] += int((ti or 0) + (to or 0))
+            day_map[day]["cost_usd"] += ((ti or 0) / 1e6) * price_in + ((to or 0) / 1e6) * price_out
+
+    total_in  = row.tokens_in  or 0
+    total_out = row.tokens_out or 0
+    cost_usd  = (total_in / 1e6) * price_in + (total_out / 1e6) * price_out
+    elapsed_min = ""
+    if row.first_at and row.last_at:
+        elapsed_min = round((row.last_at - row.first_at).total_seconds() / 60, 1)
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+
+    # ── Section 1: Summary ──
+    w.writerow(["=== SUMMARY ==="])
+    w.writerow(["Generated At", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")])
+    w.writerow(["Provider", provider.upper()])
+    w.writerow(["Model", model])
+    w.writerow(["Total Assets", row.total or 0])
+    w.writerow(["Done", row.done or 0])
+    w.writerow(["Pending", row.pending or 0])
+    w.writerow(["Error", row.error or 0])
+    w.writerow(["Folders", len(albums)])
+    w.writerow(["Tokens In", int(total_in)])
+    w.writerow(["Tokens Out", int(total_out)])
+    w.writerow(["Tokens Total", int(total_in + total_out)])
+    w.writerow(["Cost USD", round(cost_usd, 5)])
+    w.writerow(["Cost THB", round(cost_usd * 34, 4)])
+    w.writerow(["First Processed", row.first_at.strftime("%Y-%m-%d %H:%M:%S") if row.first_at else ""])
+    w.writerow(["Last Processed",  row.last_at.strftime("%Y-%m-%d %H:%M:%S")  if row.last_at  else ""])
+    w.writerow(["Elapsed (min)", elapsed_min])
+    w.writerow([])
+
+    # ── Section 2: By Folder ──
+    w.writerow(["=== BY FOLDER ==="])
+    w.writerow(["Album / Folder", "Total", "Done", "Error", "Tokens Total", "Cost USD", "Cost THB"])
+    for a in sorted(albums.values(), key=lambda x: x["folder"]):
+        c = (a["tokens_in"] / 1e6) * price_in + (a["tokens_out"] / 1e6) * price_out
+        w.writerow([a["folder"], a["total"], a["done"], a["error"],
+                    int(a["tokens_in"] + a["tokens_out"]), round(c, 5), round(c * 34, 3)])
+    w.writerow([])
+
+    # ── Section 3: By Day ──
+    w.writerow(["=== BY DAY ==="])
+    w.writerow(["Date", "Done", "Tokens", "Cost USD", "Cost THB"])
+    for d in sorted(day_map.values(), key=lambda x: x["date"], reverse=True):
+        w.writerow([d["date"], d["done"], d["tokens"],
+                    round(d["cost_usd"], 5), round(d["cost_usd"] * 34, 4)])
+
+    buf.seek(0)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return _SR(
+        iter([buf.getvalue().encode("utf-8-sig")]),  # utf-8-sig = BOM for Excel/Sheets
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=report_{ts}.csv"},
+    )
+
+
+@router.get("/api/reports/{filename}/export.csv")
+async def export_saved_report_csv(filename: str):
+    """Export a saved report JSON as CSV."""
+    import csv, io
+    from fastapi.responses import StreamingResponse as _SR
+
+    p = _REPORTS_DIR / filename
+    if not p.exists() or not p.name.startswith("report_") or not p.name.endswith(".json"):
+        raise HTTPException(status_code=404, detail="Report not found")
+    report = json.loads(p.read_text())
+    s = report.get("summary", {})
+    elapsed_min = round(s.get("elapsed_sec", 0) / 60, 1) if s.get("elapsed_sec") else ""
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+
+    w.writerow(["=== SUMMARY ==="])
+    w.writerow(["Generated At", report.get("generated_at", "")])
+    w.writerow(["Provider", report.get("provider", "")])
+    w.writerow(["Model", report.get("model", "")])
+    for k, v in [("Total Assets", "total_assets"), ("Done", "total_done"),
+                 ("Pending", "total_pending"), ("Error", "total_error"),
+                 ("Folders", "total_folders"), ("Tokens In", "tokens_in"),
+                 ("Tokens Out", "tokens_out"), ("Tokens Total", "tokens_total"),
+                 ("Cost USD", "cost_usd"), ("Cost THB", "cost_thb"),
+                 ("First Processed", "first_processed"), ("Last Processed", "last_processed")]:
+        w.writerow([k, s.get(v, "")])
+    w.writerow(["Elapsed (min)", elapsed_min])
+    w.writerow([])
+
+    w.writerow(["=== BY FOLDER ==="])
+    w.writerow(["Album / Folder", "Total", "Done", "Error", "Tokens Total", "Cost USD", "Cost THB"])
+    for f in report.get("by_folder", []):
+        w.writerow([f.get("folder",""), f.get("total",0), f.get("done",0), f.get("error",0),
+                    f.get("tokens_total",0), f.get("cost_usd",0), f.get("cost_thb",0)])
+    w.writerow([])
+
+    w.writerow(["=== BY DAY ==="])
+    w.writerow(["Date", "Done", "Tokens", "Cost USD", "Cost THB"])
+    for d in report.get("by_day", []):
+        w.writerow([d.get("date",""), d.get("done",0), d.get("tokens",0),
+                    d.get("cost_usd",0), d.get("cost_thb",0)])
+
+    buf.seek(0)
+    csv_name = filename.replace(".json", ".csv")
+    return _SR(
+        iter([buf.getvalue().encode("utf-8-sig")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={csv_name}"},
+    )
+
+
+# ── API: Saved reports ─────────────────────────────────────────────────────────
+
+@router.get("/api/reports")
+async def list_reports():
+    """List all auto-saved batch report snapshots."""
+    files = sorted(_REPORTS_DIR.glob("report_*.json"), reverse=True)
+    result = []
+    for f in files:
+        try:
+            data = json.loads(f.read_text())
+            result.append({
+                "filename": f.name,
+                "generated_at": data.get("generated_at"),
+                "provider": data.get("provider"),
+                "model": data.get("model"),
+                "total_assets": data.get("summary", {}).get("total_assets", 0),
+                "total_done": data.get("summary", {}).get("total_done", 0),
+                "cost_thb": data.get("summary", {}).get("cost_thb", 0),
+                "total_folders": data.get("summary", {}).get("total_folders", 0),
+            })
+        except Exception:
+            pass
+    return result
+
+
+@router.get("/api/reports/{filename}")
+async def get_saved_report(filename: str):
+    """Get a specific saved report by filename."""
+    p = _REPORTS_DIR / filename
+    if not p.exists() or not p.name.startswith("report_") or not p.name.endswith(".json"):
+        raise HTTPException(status_code=404, detail="Report not found")
+    return json.loads(p.read_text())
+
+
+
+# ── API: Google Sheets OAuth ──────────────────────────────────────────────────
+
+@router.get("/api/sheets/status")
+async def sheets_status():
+    from app.services.sheets_service import is_connected
+    return {"connected": is_connected()}
+
+
+@router.get("/api/sheets/auth")
+async def sheets_auth():
+    from app.services.sheets_service import get_auth_url
+    try:
+        url = get_auth_url()
+        return {"url": url}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/sheets/callback")
+async def sheets_callback(code: str = "", error: str = ""):
+    from fastapi.responses import RedirectResponse
+    from app.services.sheets_service import complete_auth
+    root = settings.APP_ROOT_PATH.rstrip("/")
+    if error or not code:
+        return RedirectResponse(url=f"{root}/?sheets=error&msg={error or 'no_code'}")
+    result = complete_auth(code)
+    if result.get("ok"):
+        return RedirectResponse(url=f"{root}/?sheets=connected")
+    import urllib.parse as _up
+    return RedirectResponse(url=f"{root}/?sheets=error&msg={_up.quote(result.get('error','unknown'))}")
+
+
+@router.delete("/api/sheets/disconnect")
+async def sheets_disconnect():
+    from app.services.sheets_service import _TOKEN_FILE
+    if _TOKEN_FILE.exists():
+        _TOKEN_FILE.unlink()
+    return {"ok": True}
+
+
 # ── API: Push to Mimir ─────────────────────────────────────────────────────────
 
 @router.get("/api/debug/mimir/{item_id}")
@@ -938,7 +1401,7 @@ async def debug_mimir_item(item_id: str, db: Session = Depends(get_db)):
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(
             f"{settings.MIMIR_BASE_URL}/api/v1/items/{item_id}",
-            headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+            headers=await _auth_header(),
         )
         if r.status_code != 200:
             raise HTTPException(status_code=r.status_code, detail=r.text[:500])
@@ -1012,7 +1475,7 @@ async def discover_mimir_uuids(folder_id: str = "", pages: int = 3):
     """
     uuid_pat = _re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', _re.I)
     all_uuid_fields: dict = {}   # uuid_key → {sample_value, from_item}
-    headers = {"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"}
+    headers = await _auth_header()
     fid = folder_id.strip() or settings.FOLDER_ID or ""
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -1047,7 +1510,7 @@ async def discover_mimir_uuids(folder_id: str = "", pages: int = 3):
 @router.get("/api/debug/mimir-schema")
 async def debug_mimir_schema():
     """Debug: try to fetch Mimir form schema to find valid taxonomy values."""
-    headers = {"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"}
+    headers = await _auth_header()
     results = {}
     async with httpx.AsyncClient(timeout=30) as client:
         for path in [
@@ -1063,6 +1526,83 @@ async def debug_mimir_schema():
             except Exception as e:
                 results[path] = {"error": str(e)}
     return results
+
+
+from app.services import vector_service as _vs
+
+
+# ── API: Vector Search (Qdrant) ────────────────────────────────────────────────
+
+@router.get("/api/vector/stats")
+async def vector_stats():
+    """สถิติ Vector DB — จำนวน vectors ที่ index แล้ว."""
+    try:
+        return _vs.collection_info()
+    except Exception as e:
+        return {"vectors_count": 0, "points_count": 0, "status": "unavailable", "error": str(e)}
+
+
+@router.get("/api/vector/search")
+async def vector_search(q: str, limit: int = 20, item_type: Optional[str] = None):
+    """Semantic search ด้วย Vector DB — รองรับภาษาไทยและอังกฤษ."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Query is required")
+    try:
+        results = _vs.search(q.strip(), limit=min(limit, 100), item_type=item_type or None)
+        return {"query": q, "results": results, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Vector search error: {e}")
+
+
+@router.post("/api/vector/index/{item_id}")
+async def vector_index_one(item_id: str, db: Session = Depends(get_db)):
+    """Index asset เดี่ยวเข้า Vector DB."""
+    asset = db.query(Asset).filter(Asset.item_id == item_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    try:
+        ok = _vs.index_asset(asset)
+        return {"ok": ok, "item_id": item_id}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Vector index error: {e}")
+
+
+@router.post("/api/vector/index-all")
+async def vector_index_all(db: Session = Depends(get_db)):
+    """Index assets ทั้งหมดที่ status=done เข้า Vector DB (SSE stream)."""
+    from app.database import SessionLocal as _SL
+    asset_ids = [a.item_id for a in db.query(Asset).filter(Asset.status == "done").all()]
+    total = len(asset_ids)
+
+    async def generate():
+        indexed = errors = 0
+        for i, item_id in enumerate(asset_ids):
+            _db = _SL()
+            try:
+                asset = _db.query(Asset).filter(Asset.item_id == item_id).first()
+                if asset and _vs.index_asset(asset):
+                    indexed += 1
+            except Exception as e:
+                errors += 1
+                logger.warning(f"Vector index error for {item_id}: {e}")
+            finally:
+                _db.close()
+            yield f"data: {json.dumps({'processed': i+1, 'indexed': indexed, 'errors': errors, 'total': total})}\n\n"
+            await asyncio.sleep(0)
+        yield f"data: {json.dumps({'type': 'done', 'indexed': indexed, 'errors': errors, 'total': total})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.delete("/api/vector/{item_id}")
+async def vector_delete(item_id: str):
+    """ลบ asset ออกจาก Vector index."""
+    try:
+        _vs.delete_asset(item_id)
+        return {"ok": True, "item_id": item_id}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Vector delete error: {e}")
 
 
 @router.post("/api/assets/{item_id}/push")
@@ -1092,67 +1632,6 @@ async def push_all(db: Session = Depends(get_db)):
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-
-# ── Export ────────────────────────────────────────────────────────────────────
-
-@router.get("/api/export/csv")
-def export_csv(status: str = "all", db: Session = Depends(get_db)):
-    q = db.query(Asset)
-    if status != "all":
-        q = q.filter(Asset.status == status)
-    assets = q.order_by(Asset.ingest_path).all()
-
-    fields = [
-        ("item_id",                "Item ID"),
-        ("status",                 "Status"),
-        ("ingest_path",            "Ingest Path"),
-        ("title",                  "Original Title"),
-        ("item_type",              "Type"),
-        ("ai_title",               "AI Title"),
-        ("ai_description",         "Description"),
-        ("ai_category",            "Category"),
-        ("ai_subcat",              "Sub-category"),
-        ("ai_editorial_categories","Editorial Categories"),
-        ("ai_persons",             "Persons"),
-        ("ai_location",            "Location"),
-        ("ai_event_occasion",      "Event/Occasion"),
-        ("ai_emotion_mood",        "Emotion/Mood"),
-        ("ai_keyword",             "Keywords"),
-        ("ai_subject_tags",        "Subject Tags"),
-        ("ai_visual_attributes",   "Visual Attributes"),
-        ("ai_language",            "Language"),
-        ("ai_department",          "Department"),
-        ("ai_project_series",      "Project/Series"),
-        ("ai_episode_segment",     "Episode/Segment"),
-        ("ai_right_license",       "Rights/License"),
-        ("ai_deliverable_type",    "Deliverable Type"),
-        ("ai_technical_tags",      "Technical Tags"),
-        ("exif_photographer",      "Photographer (EXIF)"),
-        ("exif_camera_model",      "Camera (EXIF)"),
-        ("exif_iso",               "ISO"),
-        ("exif_aperture",          "Aperture"),
-        ("exif_shutter",           "Shutter"),
-        ("exif_focal_length",      "Focal Length"),
-        ("tokens_input",           "Tokens In"),
-        ("tokens_output",          "Tokens Out"),
-        ("processed_at",           "Processed At"),
-    ]
-
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow([label for _, label in fields])
-    for a in assets:
-        writer.writerow([
-            getattr(a, col, "") or "" for col, _ in fields
-        ])
-
-    filename = f"mimir_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    return Response(
-        content="\ufeff" + buf.getvalue(),   # BOM for Excel Thai charset
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
 
 
 # ── People Directory ───────────────────────────────────────────────────────────
