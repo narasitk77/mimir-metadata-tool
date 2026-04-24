@@ -2,11 +2,13 @@
 Cognito SRP authentication for Mimir API.
 
 Supports two credential sources:
-  1. Runtime session credentials (entered via UI) — in-memory, auto-cleared after 20 min
+  1. Runtime session credentials (entered via UI) — in-memory, persists until
+     explicit logout or container restart (stay-logged-in)
   2. Environment variables (fallback) — MIMIR_USERNAME / MIMIR_PASSWORD
 
-The token is cached in-process; when session expires, both token and credentials
-are wiped and the user must log in again via UI.
+The Cognito ID token is cached in-process and auto-refreshed every ~55 min
+(Cognito TTL is 60 min). Credentials themselves live only in process memory —
+never written to disk, DB, or logs, so a container restart ends the session.
 """
 import asyncio
 import logging
@@ -16,26 +18,26 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_SESSION_TTL = 20 * 60  # 20 minutes — credentials + token wiped after this
+_TOKEN_TTL = 55 * 60  # refresh Cognito ID token every 55 min (valid 60)
 
 _session_username: str = ""
 _session_password: str = ""
-_session_expires_at: float = 0.0
+_session_started_at: float = 0.0
 
 _cached_token: str = ""
 _token_expires_at: float = 0.0
 
 
 def _is_session_active() -> bool:
-    return bool(_session_username) and time.time() < _session_expires_at
+    return bool(_session_username)
 
 
 def _wipe_session() -> None:
-    global _session_username, _session_password, _session_expires_at
+    global _session_username, _session_password, _session_started_at
     global _cached_token, _token_expires_at
     _session_username = ""
     _session_password = ""
-    _session_expires_at = 0.0
+    _session_started_at = 0.0
     _cached_token = ""
     _token_expires_at = 0.0
 
@@ -62,11 +64,6 @@ async def get_token() -> str:
     """Return a valid Cognito ID token. Uses runtime session creds if active, else env."""
     global _cached_token, _token_expires_at
 
-    # Session expired → wipe everything
-    if _session_username and time.time() >= _session_expires_at:
-        logger.info("Session expired (20 min) — wiping credentials and token")
-        _wipe_session()
-
     now = time.time()
     if _cached_token and now < _token_expires_at:
         return _cached_token
@@ -78,12 +75,7 @@ async def get_token() -> str:
     logger.info("Refreshing Mimir Cognito token via SRP...")
     token = await asyncio.to_thread(_authenticate_sync, username, password)
     _cached_token = token
-    # Token cache expires when session does (or 55 min if env-based, whichever is sooner)
-    env_ttl = now + 55 * 60
-    if _is_session_active():
-        _token_expires_at = min(_session_expires_at, env_ttl)
-    else:
-        _token_expires_at = env_ttl
+    _token_expires_at = now + _TOKEN_TTL
     logger.info(f"Mimir Cognito token refreshed (valid until {time.strftime('%H:%M:%S', time.localtime(_token_expires_at))})")
     return token
 
@@ -97,13 +89,13 @@ async def force_refresh() -> str:
 
 
 async def login(username: str, password: str) -> dict:
-    """Start a runtime session. Validates by doing a Cognito auth right away."""
-    global _session_username, _session_password, _session_expires_at
+    """Start a runtime session (persists until explicit logout or container restart)."""
+    global _session_username, _session_password, _session_started_at
     # Validate credentials first (will raise on bad password)
     await asyncio.to_thread(_authenticate_sync, username, password)
     _session_username = username
     _session_password = password
-    _session_expires_at = time.time() + _SESSION_TTL
+    _session_started_at = time.time()
     # Force a token refresh on next call so cache uses new creds
     global _cached_token, _token_expires_at
     _cached_token = ""
@@ -122,8 +114,8 @@ def get_status() -> dict:
     return {
         "active": active,
         "username": _session_username if active else "",
-        "expires_at": _session_expires_at if active else 0,
-        "expires_in_sec": max(0, int(_session_expires_at - time.time())) if active else 0,
-        "session_ttl_sec": _SESSION_TTL,
+        "started_at": _session_started_at if active else 0,
+        "session_age_sec": max(0, int(time.time() - _session_started_at)) if active else 0,
+        "token_valid_until": _token_expires_at if _cached_token else 0,
         "env_fallback": bool(settings.MIMIR_USERNAME and settings.MIMIR_PASSWORD),
     }

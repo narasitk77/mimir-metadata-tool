@@ -2848,23 +2848,24 @@ async function refreshMimirAuthStatus() {
     const btn = document.getElementById('btn-mimir-auth');
     const lbl = document.getElementById('mimir-auth-label');
     if (s.active) {
-      const mm = Math.floor(s.expires_in_sec / 60);
-      const ss = s.expires_in_sec % 60;
-      lbl.textContent = `${s.username} · ${mm}:${String(ss).padStart(2,'0')}`;
+      const displayName = (s.username || '').split('@')[0];
+      lbl.textContent = displayName;
       btn.classList.remove('btn-outline-warning');
       btn.classList.add('btn-outline-success');
-      btn.title = `Session expires in ${mm}m ${ss}s — click to logout`;
+      const hh = Math.floor(s.session_age_sec / 3600);
+      const mm = Math.floor((s.session_age_sec % 3600) / 60);
+      btn.title = `Logged in as ${s.username} · session ${hh}h ${mm}m — click to logout`;
       btn.onclick = mimirLogout;
     } else {
       lbl.textContent = 'Login Mimir';
       btn.classList.remove('btn-outline-success');
       btn.classList.add('btn-outline-warning');
-      btn.title = 'Mimir session (20 min)';
+      btn.title = 'Mimir session (stays until logout or restart)';
       btn.onclick = openMimirLoginModal;
     }
   } catch(e) { /* silent */ }
 }
-setInterval(refreshMimirAuthStatus, 5000);
+setInterval(refreshMimirAuthStatus, 30000);
 document.addEventListener('DOMContentLoaded', refreshMimirAuthStatus);
 </script>
 
@@ -2886,7 +2887,7 @@ document.addEventListener('DOMContentLoaded', refreshMimirAuthStatus);
       </div>
       <div id="mimir-login-error" style="color:#ff6b6b;font-size:.8rem;min-height:1em;margin-bottom:10px"></div>
       <div style="font-size:.75rem;color:#888;line-height:1.4;margin-bottom:14px">
-        <i class="bi bi-shield-lock me-1 text-success"></i>Credentials เก็บใน memory เท่านั้น จะถูกลบอัตโนมัติทุก 20 นาที — ไม่บันทึกลง DB / disk / env
+        <i class="bi bi-shield-lock me-1 text-success"></i>Credentials เก็บใน memory ของ container เท่านั้น (ไม่บันทึกลง DB / disk / env) — session คงอยู่จนกว่าจะ Logout หรือ restart container
       </div>
       <button id="mimir-login-submit" type="submit" class="btn btn-warning btn-sm w-100">เข้าสู่ระบบ</button>
     </form>
