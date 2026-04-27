@@ -41,6 +41,12 @@ services:
       ITEMS_PER_PAGE: ${ITEMS_PER_PAGE:-100}
       GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-7000}
       BATCH_SIZE: ${BATCH_SIZE:-20}
+      # Google SSO gate — restricts access to @thestandard.co accounts
+      GOOGLE_AUTH_CLIENT_ID: ${GOOGLE_AUTH_CLIENT_ID:-}
+      GOOGLE_AUTH_CLIENT_SECRET: ${GOOGLE_AUTH_CLIENT_SECRET:-}
+      GOOGLE_AUTH_REDIRECT_URI: ${GOOGLE_AUTH_REDIRECT_URI:-}
+      ALLOWED_EMAIL_DOMAIN: ${ALLOWED_EMAIL_DOMAIN:-thestandard.co}
+      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

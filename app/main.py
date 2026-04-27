@@ -2,9 +2,15 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.config import settings
 from app.database import Base, engine, run_migrations, _ensure_person_table
 from app.models.person import Person  # noqa: F401 — registers Person with Base
+from app.services import google_auth as _google_auth
 from app.views.routes import router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -72,4 +78,36 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Mimir Metadata AI Tool", version="1.0.0", lifespan=lifespan)
+
+# ── Google SSO gate (only active when GOOGLE_AUTH_CLIENT_ID configured) ───────
+_PUBLIC_PATHS = {"/auth/login", "/auth/callback", "/auth/logout", "/auth/denied"}
+_PUBLIC_PREFIXES = ("/static/", "/favicon")
+
+
+class AuthGateMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if not _google_auth.is_configured():
+            return await call_next(request)
+        path = request.url.path
+        if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+            return await call_next(request)
+        user = request.session.get("user")
+        if user and user.get("email"):
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+        return RedirectResponse(url=(settings.APP_ROOT_PATH or "") + "/auth/login")
+
+
+# Middleware order: outermost added last. We want SessionMiddleware to wrap the gate.
+app.add_middleware(AuthGateMiddleware)
+if settings.SESSION_SECRET_KEY:
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.SESSION_SECRET_KEY,
+        max_age=30 * 24 * 3600,  # 30 days
+        same_site="lax",
+        https_only=False,
+    )
+
 app.include_router(router)

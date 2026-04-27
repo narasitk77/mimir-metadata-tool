@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # Sub-path when running behind a reverse proxy (e.g. "/ai-tool" — no trailing slash)
     APP_ROOT_PATH: str = ""
 
+    # ── Google SSO gate (internal users only) ─────────────────────────────────
+    # If GOOGLE_AUTH_CLIENT_ID is empty the gate is disabled (open access).
+    GOOGLE_AUTH_CLIENT_ID: str = ""
+    GOOGLE_AUTH_CLIENT_SECRET: str = ""
+    GOOGLE_AUTH_REDIRECT_URI: str = ""  # e.g. "http://192.168.21.220:8765/auth/callback"
+    ALLOWED_EMAIL_DOMAIN: str = "thestandard.co"
+    SESSION_SECRET_KEY: str = ""  # required when SSO is enabled
+
     # Google Sheets integration — OAuth2 Web App
     # Create OAuth2 credentials at console.cloud.google.com → APIs → Credentials
     # Type: "Web application" — add redirect URI: {your-host}/ai-tool/api/sheets/callback

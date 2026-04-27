@@ -9,7 +9,7 @@ from typing import List, Optional
 import httpx
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -64,6 +64,8 @@ from app.services.cognito_auth import (
     logout as _cognito_logout,
     get_status as _cognito_status,
 )
+from app.services import google_auth as _google_auth
+import secrets as _py_secrets
 
 import urllib.parse
 import xml.etree.ElementTree as _ET
@@ -160,6 +162,67 @@ async def mimir_logout():
 @router.get("/api/mimir-auth/status")
 async def mimir_auth_status():
     return _cognito_status()
+
+
+# ── Google SSO gate (internal users only) ──────────────────────────────────────
+
+@router.get("/auth/login")
+async def auth_login(request: Request):
+    if not _google_auth.is_configured():
+        return HTMLResponse(
+            "<h1>SSO not configured</h1><p>GOOGLE_AUTH_CLIENT_ID / SECRET / REDIRECT_URI / SESSION_SECRET_KEY required</p>",
+            status_code=500,
+        )
+    state = _py_secrets.token_urlsafe(24)
+    request.session["oauth_state"] = state
+    return RedirectResponse(_google_auth.make_authorize_url(state))
+
+
+@router.get("/auth/callback", response_class=HTMLResponse)
+async def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    if error:
+        return HTMLResponse(f"<h1>Auth error</h1><p>{error}</p>", status_code=400)
+    expected = request.session.pop("oauth_state", None)
+    if not code or not state or state != expected:
+        return HTMLResponse("<h1>Invalid auth state</h1><p>Try logging in again.</p>", status_code=400)
+    try:
+        info = await _google_auth.exchange_code_for_user(code)
+    except Exception as e:
+        logger.warning(f"Google token exchange failed: {e}")
+        return HTMLResponse(f"<h1>Token exchange failed</h1><p>{e}</p>", status_code=502)
+    email = (info.get("email") or "").lower()
+    if not info.get("email_verified", False):
+        return HTMLResponse("<h1>Email not verified</h1>", status_code=403)
+    if not _google_auth.email_allowed(email):
+        return HTMLResponse(
+            f"""<div style="font-family:system-ui;max-width:480px;margin:80px auto;padding:24px;border:1px solid #f5c6cb;background:#fff5f5;border-radius:8px">
+                <h2 style="margin-top:0;color:#c1232b">Access denied</h2>
+                <p><strong>{email}</strong> ไม่ใช่บัญชี <code>@{settings.ALLOWED_EMAIL_DOMAIN}</code></p>
+                <p style="color:#777;font-size:.9em">เครื่องมือนี้สำหรับพนักงาน The Standard เท่านั้น</p>
+                <a href="{(settings.APP_ROOT_PATH or '') + '/auth/login'}" style="display:inline-block;margin-top:8px">← ลองใหม่ด้วยอีเมลอื่น</a>
+            </div>""",
+            status_code=403,
+        )
+    request.session["user"] = {
+        "email": email,
+        "name": info.get("name", ""),
+        "picture": info.get("picture", ""),
+    }
+    return RedirectResponse(settings.APP_ROOT_PATH or "/")
+
+
+@router.post("/auth/logout")
+async def auth_logout(request: Request):
+    request.session.pop("user", None)
+    return {"ok": True}
+
+
+@router.get("/auth/me")
+async def auth_me(request: Request):
+    u = request.session.get("user")
+    if u:
+        return {"authenticated": True, **u}
+    return {"authenticated": False, "configured": _google_auth.is_configured()}
 
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────

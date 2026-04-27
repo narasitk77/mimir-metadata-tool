@@ -183,6 +183,11 @@
     <button id="btn-mimir-auth" class="btn btn-sm btn-outline-warning" onclick="openMimirLoginModal()" title="Mimir session (20 min)" style="padding:.2rem .6rem;font-size:.8rem">
       <i class="bi bi-key me-1"></i><span id="mimir-auth-label">Login Mimir</span>
     </button>
+    <span id="sso-user-badge" style="display:none;align-items:center;gap:6px;padding:.15rem .5rem;font-size:.8rem;color:#9aa;border:1px solid #2a2a2a;border-radius:6px">
+      <img id="sso-user-pic" src="" alt="" style="width:18px;height:18px;border-radius:50%;display:none">
+      <span id="sso-user-email"></span>
+      <a href="#" onclick="ssoLogout(event)" title="Sign out" style="color:#9aa;text-decoration:none;margin-left:4px"><i class="bi bi-box-arrow-right"></i></a>
+    </span>
     <button class="btn btn-sm btn-outline-secondary" onclick="openPeopleModal()" title="คลังบุคคล" style="padding:.2rem .6rem;font-size:.8rem">
       <i class="bi bi-people me-1"></i>คลังบุคคล
     </button>
@@ -2867,6 +2872,29 @@ async function refreshMimirAuthStatus() {
 }
 setInterval(refreshMimirAuthStatus, 30000);
 document.addEventListener('DOMContentLoaded', refreshMimirAuthStatus);
+
+// ── Google SSO badge + logout ────────────────────────────────────────────────
+async function refreshSsoUser() {
+  try {
+    const r = await fetch(_ROOT + '/auth/me');
+    const s = await r.json();
+    const badge = document.getElementById('sso-user-badge');
+    if (!s.configured && !s.authenticated) { badge.style.display = 'none'; return; }
+    if (s.authenticated) {
+      badge.style.display = 'inline-flex';
+      document.getElementById('sso-user-email').textContent = s.email || '';
+      const pic = document.getElementById('sso-user-pic');
+      if (s.picture) { pic.src = s.picture; pic.style.display = 'inline-block'; }
+    }
+  } catch(e) { /* silent */ }
+}
+async function ssoLogout(ev) {
+  ev?.preventDefault();
+  if (!confirm('ออกจากระบบ?')) return;
+  await fetch(_ROOT + '/auth/logout', {method: 'POST'});
+  location.href = _ROOT + '/auth/login';
+}
+document.addEventListener('DOMContentLoaded', refreshSsoUser);
 </script>
 
 <!-- Mimir Login Modal -->
