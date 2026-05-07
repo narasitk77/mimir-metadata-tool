@@ -83,6 +83,10 @@ _cancel:  dict[str, bool] = {"batch": False}   # set True to stop batch between 
 _active_folder_ids: List[str] = []
 _active_folder_contexts: List[str] = []
 _batch_album_keys: List[str] = []   # empty = run all pending
+# Timestamp of POST /api/batch — if stream never connects within STREAM_GRACE_SEC
+# the flag auto-clears so the user isn't permanently locked out by a stuck flag.
+_batch_started_at: Optional[float] = None
+_STREAM_GRACE_SEC = 15.0
 
 
 # ── Views ──────────────────────────────────────────────────────────────────────
@@ -1094,7 +1098,13 @@ async def diagnostics(db: Session = Depends(get_db)):
 
 @router.post("/api/batch")
 async def start_batch(body: BatchStartRequest = BatchStartRequest()):
-    global _batch_album_keys
+    global _batch_album_keys, _batch_started_at
+    import time as _time
+    # Auto-clear a stuck flag if the previous POST never had a stream connect
+    if (_running["batch"] and _batch_started_at
+            and _time.time() - _batch_started_at > _STREAM_GRACE_SEC):
+        logger.warning("Auto-clearing stuck batch flag (stream never connected)")
+        _running["batch"] = False
     if _running["batch"] and not body.force:
         raise HTTPException(status_code=409, detail="Batch already running")
     provider = settings.AI_PROVIDER.lower()
@@ -1107,6 +1117,7 @@ async def start_batch(body: BatchStartRequest = BatchStartRequest()):
         raise HTTPException(status_code=400, detail="No pending assets — กด Fetch ก่อน")
     _batch_album_keys = body.album_keys
     _running["batch"] = True
+    _batch_started_at = _time.time()
     scope = f"{len(body.album_keys)} albums" if body.album_keys else "all pending"
     return {"ok": True, "provider": provider,
             "message": f"Batch started ({provider}, {scope}) — connect to /api/batch/stream"}
@@ -1257,9 +1268,11 @@ async def _save_report_snapshot(db_session) -> Optional[str]:
 
 @router.get("/api/batch/stream")
 async def batch_stream():
+    global _batch_started_at
     provider = settings.AI_PROVIDER.lower()
     album_keys = list(_batch_album_keys)   # snapshot at stream open
     _cancel["batch"] = False               # reset cancel flag for this run
+    _batch_started_at = None               # stream connected → cancel watchdog
 
     async def generate():
         try:
