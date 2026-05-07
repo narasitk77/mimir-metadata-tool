@@ -170,13 +170,27 @@ async def mimir_auth_status():
 
 # ── Google SSO gate (internal users only) ──────────────────────────────────────
 
-@router.get("/auth/login")
-async def auth_login(request: Request):
+@router.get("/auth/login", response_class=HTMLResponse)
+async def auth_login(request: Request, error: str = ""):
+    """Login portal — shows a 'Sign in with Google' button."""
     if not _google_auth.is_configured():
         return HTMLResponse(
             "<h1>SSO not configured</h1><p>GOOGLE_AUTH_CLIENT_ID / SECRET / REDIRECT_URI / SESSION_SECRET_KEY required</p>",
             status_code=500,
         )
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "root_path": settings.APP_ROOT_PATH.rstrip("/"),
+        "error": error,
+        "allowed_domain": settings.ALLOWED_EMAIL_DOMAIN,
+    })
+
+
+@router.get("/auth/start")
+async def auth_start(request: Request):
+    """Initiate the OAuth redirect to Google. Called when user clicks the portal button."""
+    if not _google_auth.is_configured():
+        raise HTTPException(status_code=500, detail="SSO not configured")
     state = _py_secrets.token_urlsafe(24)
     request.session["oauth_state"] = state
     return RedirectResponse(_google_auth.make_authorize_url(state))
