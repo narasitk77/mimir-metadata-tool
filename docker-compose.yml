@@ -26,7 +26,8 @@ services:
       - mimir_data:/app/data
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-mimir}:${POSTGRES_PASSWORD:-mimir_secret}@postgres:5432/${POSTGRES_DB:-mimir_metadata}
-      AI_PROVIDER: gemini
+      # AI provider switch — "gemini" or "claude"
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
       MIMIR_BASE_URL: ${MIMIR_BASE_URL:-https://apac.mjoll.no}
       # Static token (expires ~1h) — leave empty and use Cognito SRP below for auto-refresh
       MIMIR_TOKEN: ${MIMIR_TOKEN:-}
@@ -36,8 +37,12 @@ services:
       MIMIR_USERNAME: ${MIMIR_USERNAME:-}
       MIMIR_PASSWORD: ${MIMIR_PASSWORD:-}
       FOLDER_ID: ${FOLDER_ID}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # Gemini (used when AI_PROVIDER=gemini)
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      # Anthropic Claude (used when AI_PROVIDER=claude)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
       ITEMS_PER_PAGE: ${ITEMS_PER_PAGE:-100}
       GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-7000}
       BATCH_SIZE: ${BATCH_SIZE:-20}

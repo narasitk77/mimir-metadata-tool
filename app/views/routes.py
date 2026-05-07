@@ -69,7 +69,7 @@ import secrets as _py_secrets
 
 import urllib.parse
 import xml.etree.ElementTree as _ET
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.models.asset import Asset
 from app.models.person import Person
 
@@ -1056,6 +1056,42 @@ class BatchStartRequest(BaseModel):
     force: bool = False
 
 
+@router.get("/api/diag")
+async def diagnostics(db: Session = Depends(get_db)):
+    """Diagnostic endpoint — surface common batch-failure causes."""
+    from app.controllers.gemini_controller import get_daily_usage, check_rate_limit
+    provider = settings.AI_PROVIDER.lower()
+    pending = db.query(Asset).filter(Asset.status == "pending").count()
+    processing = db.query(Asset).filter(Asset.status == "processing").count()
+    issues = []
+    if provider == "gemini" and not settings.GEMINI_API_KEY:
+        issues.append("GEMINI_API_KEY not set")
+    if provider == "claude" and not settings.ANTHROPIC_API_KEY:
+        issues.append("ANTHROPIC_API_KEY not set")
+    if pending == 0:
+        issues.append("No pending assets — run Fetch first")
+    rate_msg = check_rate_limit() if provider == "gemini" else None
+    if rate_msg:
+        issues.append(f"Rate limit: {rate_msg}")
+    if _running["batch"]:
+        issues.append("Batch flag stuck (running=True) — POST /api/batch/reset to clear")
+    return {
+        "provider": provider,
+        "model": settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL,
+        "gemini_key_set": bool(settings.GEMINI_API_KEY),
+        "anthropic_key_set": bool(settings.ANTHROPIC_API_KEY),
+        "google_sso_configured": _google_auth.is_configured(),
+        "allowed_email_domain": settings.ALLOWED_EMAIL_DOMAIN,
+        "pending_assets": pending,
+        "processing_assets": processing,
+        "batch_running": _running["batch"],
+        "fetch_running": _running["fetch"],
+        "daily_usage": get_daily_usage() if provider == "gemini" else None,
+        "issues": issues,
+        "ok": not issues,
+    }
+
+
 @router.post("/api/batch")
 async def start_batch(body: BatchStartRequest = BatchStartRequest()):
     global _batch_album_keys
@@ -1066,6 +1102,9 @@ async def start_batch(body: BatchStartRequest = BatchStartRequest()):
         raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY not set")
     if provider == "gemini" and not settings.GEMINI_API_KEY:
         raise HTTPException(status_code=400, detail="GEMINI_API_KEY not set")
+    pending_count = SessionLocal().query(Asset).filter(Asset.status == "pending").count()
+    if pending_count == 0:
+        raise HTTPException(status_code=400, detail="No pending assets — กด Fetch ก่อน")
     _batch_album_keys = body.album_keys
     _running["batch"] = True
     scope = f"{len(body.album_keys)} albums" if body.album_keys else "all pending"
