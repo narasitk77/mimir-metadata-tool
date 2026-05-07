@@ -16,19 +16,34 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
 
+def _client_id() -> str:
+    return settings.GOOGLE_AUTH_CLIENT_ID or settings.GOOGLE_OAUTH_CLIENT_ID
+
+
+def _client_secret() -> str:
+    return settings.GOOGLE_AUTH_CLIENT_SECRET or settings.GOOGLE_OAUTH_CLIENT_SECRET
+
+
+def _redirect_uri() -> str:
+    # Prefer the SSO-specific URI; fall back to the Sheets one if a single OAuth
+    # client is being shared (callback path differs, but if user only set OAUTH
+    # vars they likely registered both /auth/callback and /api/sheets/callback).
+    return settings.GOOGLE_AUTH_REDIRECT_URI or settings.GOOGLE_REDIRECT_URI
+
+
 def is_configured() -> bool:
     return bool(
-        settings.GOOGLE_AUTH_CLIENT_ID
-        and settings.GOOGLE_AUTH_CLIENT_SECRET
-        and settings.GOOGLE_AUTH_REDIRECT_URI
+        _client_id()
+        and _client_secret()
+        and _redirect_uri()
         and settings.SESSION_SECRET_KEY
     )
 
 
 def make_authorize_url(state: str) -> str:
     params = {
-        "client_id": settings.GOOGLE_AUTH_CLIENT_ID,
-        "redirect_uri": settings.GOOGLE_AUTH_REDIRECT_URI,
+        "client_id": _client_id(),
+        "redirect_uri": _redirect_uri(),
         "response_type": "code",
         "scope": "openid email profile",
         "state": state,
@@ -47,9 +62,9 @@ async def exchange_code_for_user(code: str) -> dict:
             GOOGLE_TOKEN_URL,
             data={
                 "code": code,
-                "client_id": settings.GOOGLE_AUTH_CLIENT_ID,
-                "client_secret": settings.GOOGLE_AUTH_CLIENT_SECRET,
-                "redirect_uri": settings.GOOGLE_AUTH_REDIRECT_URI,
+                "client_id": _client_id(),
+                "client_secret": _client_secret(),
+                "redirect_uri": _redirect_uri(),
                 "grant_type": "authorization_code",
             },
         )
