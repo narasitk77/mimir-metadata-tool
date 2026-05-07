@@ -52,6 +52,16 @@ services:
       GOOGLE_AUTH_REDIRECT_URI: ${GOOGLE_AUTH_REDIRECT_URI:-}
       ALLOWED_EMAIL_DOMAIN: ${ALLOWED_EMAIL_DOMAIN:-thestandard.co}
       SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-}
+      # Whitelist & admin (comma-separated emails)
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # Google Sheets OAuth (optional — uses same Client ID as SSO)
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID:-}
+      # Sub-path when running behind reverse proxy (e.g. "/ai-tool"); leave empty otherwise
+      APP_ROOT_PATH: ${APP_ROOT_PATH:-}
     depends_on:
       postgres:
         condition: service_healthy
