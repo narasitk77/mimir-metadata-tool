@@ -80,8 +80,50 @@ async def exchange_code_for_user(code: str) -> dict:
         return u.json()
 
 
+def _env_allowed_emails() -> set[str]:
+    return {e.strip().lower() for e in (settings.ALLOWED_EMAILS or "").split(",") if e.strip()}
+
+
+def _env_admin_emails() -> set[str]:
+    return {e.strip().lower() for e in (settings.ADMIN_EMAILS or "").split(",") if e.strip()}
+
+
+def _db_allowed_emails() -> tuple[set[str], set[str]]:
+    """Return (allowed, admins) from DB. Empty sets if table missing or empty."""
+    try:
+        from app.database import SessionLocal
+        from app.models.allowed_user import AllowedUser
+        db = SessionLocal()
+        try:
+            rows = db.query(AllowedUser).all()
+            allowed = {r.email.lower() for r in rows}
+            admins  = {r.email.lower() for r in rows if r.is_admin}
+            return allowed, admins
+        finally:
+            db.close()
+    except Exception:
+        return set(), set()
+
+
 def email_allowed(email: str) -> bool:
     if not email:
         return False
+    email = email.lower()
+    env_allowed = _env_allowed_emails()
+    db_allowed, _ = _db_allowed_emails()
+    # If a whitelist is defined (env or DB), use it strictly
+    if env_allowed or db_allowed:
+        return email in env_allowed or email in db_allowed
+    # Otherwise fall back to domain check
     domain = settings.ALLOWED_EMAIL_DOMAIN.lower().lstrip("@")
-    return email.lower().endswith("@" + domain)
+    return email.endswith("@" + domain)
+
+
+def email_is_admin(email: str) -> bool:
+    if not email:
+        return False
+    email = email.lower()
+    if email in _env_admin_emails():
+        return True
+    _, db_admins = _db_allowed_emails()
+    return email in db_admins

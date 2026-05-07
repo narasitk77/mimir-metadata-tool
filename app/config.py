@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     ALLOWED_EMAIL_DOMAIN: str = "thestandard.co"
     SESSION_SECRET_KEY: str = ""  # required when SSO is enabled
 
+    # Whitelist mode — เมื่อตั้งค่าจะอนุญาตเฉพาะอีเมลในรายการ (แทน wildcard ทั้งโดเมน)
+    # ALLOWED_EMAILS comma-separated — bootstrap whitelist (อ่านจาก env ตอน startup)
+    # ADMIN_EMAILS subset ที่เห็นหน้า /admin/users ใช้เพิ่ม/ลบสิทธิ์คนอื่น
+    ALLOWED_EMAILS: str = ""
+    ADMIN_EMAILS:   str = ""
+
     # Google Sheets integration — OAuth2 Web App
     # Create OAuth2 credentials at console.cloud.google.com → APIs → Credentials
     # Type: "Web application" — add redirect URI: {your-host}/ai-tool/api/sheets/callback

@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
 from app.database import Base, engine, run_migrations, _ensure_person_table
 from app.models.person import Person  # noqa: F401 — registers Person with Base
+from app.models.allowed_user import AllowedUser  # noqa: F401
 from app.services import google_auth as _google_auth
 from app.views.routes import router
 

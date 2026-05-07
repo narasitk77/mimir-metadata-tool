@@ -211,6 +211,7 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
         "email": email,
         "name": info.get("name", ""),
         "picture": info.get("picture", ""),
+        "is_admin": _google_auth.email_is_admin(email),
     }
     return RedirectResponse(settings.APP_ROOT_PATH or "/")
 
@@ -227,6 +228,74 @@ async def auth_me(request: Request):
     if u:
         return {"authenticated": True, **u}
     return {"authenticated": False, "configured": _google_auth.is_configured()}
+
+
+# ── Admin: manage allowed users ───────────────────────────────────────────────
+
+def _require_admin(request: Request):
+    u = request.session.get("user") or {}
+    if not _google_auth.email_is_admin(u.get("email", "")):
+        raise HTTPException(status_code=403, detail="Admin only")
+    return u
+
+
+@router.get("/admin/users", response_class=HTMLResponse)
+async def admin_users_page(request: Request):
+    _require_admin(request)
+    return templates.TemplateResponse("admin_users.html", {
+        "request": request,
+        "root_path": settings.APP_ROOT_PATH.rstrip("/"),
+    })
+
+
+class AllowedUserAdd(BaseModel):
+    email: str
+    is_admin: bool = False
+
+
+@router.get("/api/admin/users")
+async def list_allowed_users(request: Request, db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.models.allowed_user import AllowedUser
+    rows = db.query(AllowedUser).order_by(AllowedUser.email).all()
+    env_emails = _google_auth._env_allowed_emails()
+    env_admins = _google_auth._env_admin_emails()
+    env_entries = sorted(env_emails - {r.email.lower() for r in rows})
+    return {
+        "env": [{"email": e, "is_admin": e in env_admins, "source": "env"} for e in env_entries],
+        "db":  [r.to_dict() | {"source": "db"} for r in rows],
+    }
+
+
+@router.post("/api/admin/users")
+async def add_allowed_user(body: AllowedUserAdd, request: Request, db: Session = Depends(get_db)):
+    me = _require_admin(request)
+    from app.models.allowed_user import AllowedUser
+    email = body.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="invalid email")
+    existing = db.query(AllowedUser).filter(AllowedUser.email == email).first()
+    if existing:
+        existing.is_admin = bool(body.is_admin)
+        db.commit()
+        return existing.to_dict()
+    row = AllowedUser(email=email, is_admin=bool(body.is_admin), added_by=me.get("email", ""))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
+
+
+@router.delete("/api/admin/users/{user_id}")
+async def remove_allowed_user(user_id: int, request: Request, db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.models.allowed_user import AllowedUser
+    row = db.query(AllowedUser).filter(AllowedUser.id == user_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────
