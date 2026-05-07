@@ -168,6 +168,13 @@ async def mimir_auth_status():
     return _cognito_status()
 
 
+# ── Health check (public — for Docker / load balancer probes) ─────────────────
+
+@router.get("/healthz")
+async def healthz():
+    return {"ok": True}
+
+
 # ── Google SSO gate (internal users only) ──────────────────────────────────────
 
 @router.get("/auth/login", response_class=HTMLResponse)

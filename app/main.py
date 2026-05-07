@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Mimir Metadata AI Tool", version="1.0.0", lifespan=lifespan)
 
 # ── Google SSO gate (only active when GOOGLE_AUTH_CLIENT_ID configured) ───────
-_PUBLIC_PATHS = {"/auth/login", "/auth/start", "/auth/callback", "/auth/logout", "/auth/denied"}
+_PUBLIC_PATHS = {"/auth/login", "/auth/start", "/auth/callback", "/auth/logout", "/auth/denied", "/healthz"}
 _PUBLIC_PREFIXES = ("/static/", "/favicon")
 
 
