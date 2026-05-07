@@ -67,7 +67,20 @@ curl http://192.168.21.220:8765/api/diag
 
 | อาการ | สาเหตุ |
 |------|-------|
-| เข้าหน้าแรกได้เลยไม่ต้อง login | env ไม่ครบ → `is_configured()` คืน False → middleware ปล่อยผ่าน |
+| เข้าหน้าแรกได้เลยไม่ต้อง login | env ไม่ครบ → `is_configured()` คืน False → middleware ปล่อยผ่าน (ดู log จะมี warning ตอน startup) |
 | `redirect_uri_mismatch` | URI ใน Google Console ไม่ตรงกับ `GOOGLE_AUTH_REDIRECT_URI` (case-sensitive รวม port) |
 | `Invalid auth state` | session cookie ไม่ persist — เช็คว่าตั้ง `SESSION_SECRET_KEY` |
 | `Access denied — ไม่ใช่บัญชี @thestandard.co` | login ผิด account — กดลิงก์ "ลองใหม่ด้วยอีเมลอื่น" |
+| Admin เพิ่มอีเมล non-domain ใน whitelist ไม่ได้ | ระบบบังคับให้ทุกอีเมล (รวม whitelist) ต้องเป็น `@thestandard.co` — เพื่อกันคนนอกองค์กรหลุดเข้ามา |
+
+## ความปลอดภัยของ domain check
+
+ระบบบังคับ `@thestandard.co` 2 ชั้น:
+
+1. **Google "hd" hint** — pre-filter account picker ที่ฝั่ง Google (ผู้ใช้เห็นเฉพาะบัญชี Workspace ของบริษัท)
+2. **Server-side enforcement** — `email_allowed()` ตรวจ domain ทุกครั้งหลัง callback **ก่อน** เช็ค whitelist  
+   (whitelist `ALLOWED_EMAILS` / DB ใช้กรองเพิ่มเติมเท่านั้น **ไม่สามารถ override domain check ได้**)
+
+ดังนั้นแม้จะ:
+- มีคนแก้ DB เพิ่ม `outsider@gmail.com` เข้า `allowed_users` → จะยังเข้าไม่ได้
+- bypass Google "hd" hint ได้ → server ปฏิเสธอยู่ดี

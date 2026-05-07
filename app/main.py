@@ -56,6 +56,13 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     run_migrations()
     _ensure_person_table()
+    if _google_auth.is_configured():
+        _log.info(f"Google SSO gate ENABLED — restricted to @{settings.ALLOWED_EMAIL_DOMAIN}")
+    else:
+        _log.warning(
+            "Google SSO gate is DISABLED — app is open to anyone. "
+            "Set GOOGLE_AUTH_CLIENT_ID / SECRET / REDIRECT_URI / SESSION_SECRET_KEY to enable."
+        )
     if _QDRANT:
         try:
             _vs.init_collection()

@@ -288,6 +288,9 @@ async def add_allowed_user(body: AllowedUserAdd, request: Request, db: Session =
     email = body.email.strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="invalid email")
+    domain = settings.ALLOWED_EMAIL_DOMAIN.lower().lstrip("@")
+    if domain and not email.endswith("@" + domain):
+        raise HTTPException(status_code=400, detail=f"email must end with @{domain}")
     existing = db.query(AllowedUser).filter(AllowedUser.email == email).first()
     if existing:
         existing.is_admin = bool(body.is_admin)

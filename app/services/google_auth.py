@@ -109,14 +109,16 @@ def email_allowed(email: str) -> bool:
     if not email:
         return False
     email = email.lower()
+    # Hard requirement: must belong to the allowed domain (e.g. @thestandard.co).
+    # Whitelist (env/DB) only narrows further — it cannot grant access to outsiders.
+    domain = settings.ALLOWED_EMAIL_DOMAIN.lower().lstrip("@")
+    if domain and not email.endswith("@" + domain):
+        return False
     env_allowed = _env_allowed_emails()
     db_allowed, _ = _db_allowed_emails()
-    # If a whitelist is defined (env or DB), use it strictly
     if env_allowed or db_allowed:
         return email in env_allowed or email in db_allowed
-    # Otherwise fall back to domain check
-    domain = settings.ALLOWED_EMAIL_DOMAIN.lower().lstrip("@")
-    return email.endswith("@" + domain)
+    return True
 
 
 def email_is_admin(email: str) -> bool:
