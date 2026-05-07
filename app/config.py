@@ -60,6 +60,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"  # ignore unrelated env vars (APP_PORT, POSTGRES_*, …)
 
 
 settings = Settings()
