@@ -19,6 +19,7 @@ services:
 
   mimir-tool:
     image: ghcr.io/narasitk77/mimir-metadata-tool:latest
+    pull_policy: always
     container_name: mimir-metadata-tool
     ports:
       - "${APP_PORT:-8765}:8000"
