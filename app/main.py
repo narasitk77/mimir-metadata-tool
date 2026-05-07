@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -107,8 +110,44 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         return RedirectResponse(url=(settings.APP_ROOT_PATH or "") + "/auth/login")
 
 
-# Middleware order: outermost added last. We want SessionMiddleware to wrap the gate.
+def _canonical_host() -> str | None:
+    uri = settings.GOOGLE_AUTH_REDIRECT_URI or ""
+    if not uri:
+        return None
+    return urlparse(uri).netloc or None
+
+
+class CanonicalHostMiddleware(BaseHTTPMiddleware):
+    """Force every browser request onto the host registered in the OAuth
+    redirect URI — otherwise the session cookie set during /auth/start
+    won't be sent to /auth/callback (cross-host) and login fails with
+    'Invalid auth state'."""
+    async def dispatch(self, request: Request, call_next):
+        if not _google_auth.is_configured():
+            return await call_next(request)
+        path = request.url.path
+        # Healthchecks / static assets should bypass — they hit localhost
+        if path == "/healthz" or path.startswith("/static/"):
+            return await call_next(request)
+        canonical = _canonical_host()
+        if not canonical:
+            return await call_next(request)
+        actual = (request.headers.get("host") or "").lower()
+        # Allow internal probes (Docker healthcheck uses localhost:8000)
+        if actual.startswith(("localhost", "127.0.0.1", "[::1]")):
+            return await call_next(request)
+        if actual != canonical.lower():
+            target = f"{request.url.scheme}://{canonical}{path}"
+            if request.url.query:
+                target += "?" + request.url.query
+            return RedirectResponse(url=target, status_code=307)
+        return await call_next(request)
+
+
+# Middleware order: outermost added last. Session must wrap everything so
+# downstream middlewares/routes see request.session populated.
 app.add_middleware(AuthGateMiddleware)
+app.add_middleware(CanonicalHostMiddleware)
 if settings.SESSION_SECRET_KEY:
     app.add_middleware(
         SessionMiddleware,
