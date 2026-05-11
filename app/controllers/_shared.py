@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "img_cache"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Max long-edge before sending to AI (px). Claude/Gemini optimal = 1568px max.
+# Max long-edge before sending to AI (px). Gemini optimal = 1568px max.
 # Proxy is already 1080×720 so no resize needed — just PNG→JPEG conversion saves ~92%
 _AI_MAX_PX   = 1568
 _JPEG_QUALITY = 85

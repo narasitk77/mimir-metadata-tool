@@ -55,7 +55,6 @@ class BulkReanalyzeRequest(BaseModel):
 
 from app.config import settings
 from app.controllers.gemini_controller import run_gemini_batch, _analyze_one as _gemini_analyze
-from app.controllers.claude_controller import run_claude_batch, _analyze_one as _claude_analyze
 from app.controllers.mimir_controller import discover_hires_folders, extract_folder_id, fetch_all_items, push_metadata_to_mimir, _auth_header
 from app.controllers._shared import cache_stats, clear_image_cache, extract_event_from_path, extract_path_context
 from app.services.cognito_auth import (
@@ -93,13 +92,12 @@ _STREAM_GRACE_SEC = 15.0
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    provider = settings.AI_PROVIDER.lower()
-    model = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
+    model = settings.GEMINI_MODEL
     return templates.TemplateResponse("index.html", {
         "request": request,
         "mimir_url": settings.MIMIR_BASE_URL,
         "gemini_model": settings.GEMINI_MODEL,  # kept for compat
-        "ai_provider": provider.title(),
+        "ai_provider": "Gemini",
         "ai_model": model,
         "root_path": settings.APP_ROOT_PATH.rstrip("/"),
     })
@@ -324,15 +322,11 @@ async def remove_allowed_user(user_id: int, request: Request, db: Session = Depe
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────
 
-# Pricing per provider (USD per 1M tokens)
-_PRICING = {
-    "gemini": {"input": 0.15,  "output": 0.60},
-    "claude": {"input": 0.80,  "output": 4.00},  # claude-haiku-4-5
-}
+# Pricing (USD per 1M tokens) — Gemini 2.5 Flash
+_PRICING = {"input": 0.15, "output": 0.60}
 
 def _get_pricing():
-    p = _PRICING.get(settings.AI_PROVIDER.lower(), _PRICING["gemini"])
-    return p["input"], p["output"]
+    return _PRICING["input"], _PRICING["output"]
 
 PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M = _get_pricing()
 
@@ -341,9 +335,8 @@ async def get_token_stats(db: Session = Depends(get_db)):
     from sqlalchemy import func
     from app.controllers.gemini_controller import get_daily_usage
 
-    provider = settings.AI_PROVIDER.lower()
     price_in, price_out = _get_pricing()
-    model_name = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
+    model_name = settings.GEMINI_MODEL
 
     row = db.query(
         func.sum(Asset.tokens_input).label("total_input"),
@@ -362,24 +355,17 @@ async def get_token_stats(db: Session = Depends(get_db)):
     avg_input  = round(total_input  / analyzed, 1) if analyzed else 0
     avg_output = round(total_output / analyzed, 1) if analyzed else 0
 
-    # Daily usage (from DB — ใช้ได้กับทั้ง Gemini และ Claude)
+    # Daily usage (from DB)
     today = get_daily_usage()
 
-    # Quota limits ตาม provider
-    if provider == "claude":
-        # Claude paid — ไม่มี hard daily limit แต่แสดง usage วันนี้
-        rpd_limit = None   # ไม่มี limit แบบ free tier
-        tpd_limit = None
-        rpd_pct   = 0.0
-        tpd_pct   = 0.0
-    else:
-        rpd_limit = settings.FREE_TIER_RPD
-        tpd_limit = settings.FREE_TIER_TPD
-        rpd_pct   = round(today["requests"] / rpd_limit * 100, 1) if rpd_limit else 0
-        tpd_pct   = round(today["tokens"]   / tpd_limit * 100, 1) if tpd_limit else 0
+    # Quota limits — Gemini free tier
+    rpd_limit = settings.FREE_TIER_RPD
+    tpd_limit = settings.FREE_TIER_TPD
+    rpd_pct   = round(today["requests"] / rpd_limit * 100, 1) if rpd_limit else 0
+    tpd_pct   = round(today["tokens"]   / tpd_limit * 100, 1) if tpd_limit else 0
 
     return {
-        "provider":      provider,
+        "provider":      "gemini",
         "analyzed":      analyzed,
         "total_input":   int(total_input),
         "total_output":  int(total_output),
@@ -531,8 +517,7 @@ async def get_report(db: Session = Depends(get_db)):
     """Lifetime report: folders, assets done, tokens, cost, time."""
     from sqlalchemy import func, case
     price_in, price_out = _get_pricing()
-    provider = settings.AI_PROVIDER.lower()
-    model = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
+    model = settings.GEMINI_MODEL
 
     # --- Global summary ---
     row = db.query(
@@ -889,10 +874,7 @@ async def reanalyze_asset(item_id: str, body: ReanalyzeRequest, db: Session = De
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    provider = settings.AI_PROVIDER.lower()
-    if provider == "claude" and not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY not set")
-    if provider == "gemini" and not settings.GEMINI_API_KEY:
+    if not settings.GEMINI_API_KEY:
         raise HTTPException(status_code=400, detail="GEMINI_API_KEY not set")
 
     # Save context and status — only overwrite context if caller provided new values
@@ -904,7 +886,7 @@ async def reanalyze_asset(item_id: str, body: ReanalyzeRequest, db: Session = De
     db.commit()
     db.refresh(asset)  # reload all attributes after commit
 
-    analyze_fn = _claude_analyze if provider == "claude" else _gemini_analyze
+    analyze_fn = _gemini_analyze
 
     # Use the saved asset context (may be preserved from before this call)
     saved_context_urls = json.loads(asset.context_urls or "[]")
@@ -1146,7 +1128,7 @@ async def import_items(body: ImportItemsRequest, db: Session = Depends(get_db)):
     return {"ok": True, "imported": imported, "results": results}
 
 
-# ── API: AI Batch (SSE) — รองรับ Gemini และ Claude ────────────────────────────
+# ── API: AI Batch (SSE) — Gemini ──────────────────────────────────────────────
 
 class BatchStartRequest(BaseModel):
     album_keys: List[str] = []   # empty list = process all pending albums
@@ -1157,33 +1139,29 @@ class BatchStartRequest(BaseModel):
 async def diagnostics(db: Session = Depends(get_db)):
     """Diagnostic endpoint — surface common batch-failure causes."""
     from app.controllers.gemini_controller import get_daily_usage, check_rate_limit
-    provider = settings.AI_PROVIDER.lower()
     pending = db.query(Asset).filter(Asset.status == "pending").count()
     processing = db.query(Asset).filter(Asset.status == "processing").count()
     issues = []
-    if provider == "gemini" and not settings.GEMINI_API_KEY:
+    if not settings.GEMINI_API_KEY:
         issues.append("GEMINI_API_KEY not set")
-    if provider == "claude" and not settings.ANTHROPIC_API_KEY:
-        issues.append("ANTHROPIC_API_KEY not set")
     if pending == 0:
         issues.append("No pending assets — run Fetch first")
-    rate_msg = check_rate_limit() if provider == "gemini" else None
+    rate_msg = check_rate_limit()
     if rate_msg:
         issues.append(f"Rate limit: {rate_msg}")
     if _running["batch"]:
         issues.append("Batch flag stuck (running=True) — POST /api/batch/reset to clear")
     return {
-        "provider": provider,
-        "model": settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL,
+        "provider": "gemini",
+        "model": settings.GEMINI_MODEL,
         "gemini_key_set": bool(settings.GEMINI_API_KEY),
-        "anthropic_key_set": bool(settings.ANTHROPIC_API_KEY),
         "google_sso_configured": _google_auth.is_configured(),
         "allowed_email_domain": settings.ALLOWED_EMAIL_DOMAIN,
         "pending_assets": pending,
         "processing_assets": processing,
         "batch_running": _running["batch"],
         "fetch_running": _running["fetch"],
-        "daily_usage": get_daily_usage() if provider == "gemini" else None,
+        "daily_usage": get_daily_usage(),
         "issues": issues,
         "ok": not issues,
     }
@@ -1200,10 +1178,7 @@ async def start_batch(body: BatchStartRequest = BatchStartRequest()):
         _running["batch"] = False
     if _running["batch"] and not body.force:
         raise HTTPException(status_code=409, detail="Batch already running")
-    provider = settings.AI_PROVIDER.lower()
-    if provider == "claude" and not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY not set")
-    if provider == "gemini" and not settings.GEMINI_API_KEY:
+    if not settings.GEMINI_API_KEY:
         raise HTTPException(status_code=400, detail="GEMINI_API_KEY not set")
     pending_count = SessionLocal().query(Asset).filter(Asset.status == "pending").count()
     if pending_count == 0:
@@ -1241,8 +1216,8 @@ async def _save_report_snapshot(db_session) -> Optional[str]:
     from sqlalchemy import func, case as _case
     try:
         price_in, price_out = _get_pricing()
-        provider = settings.AI_PROVIDER.lower()
-        model = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
+        provider = "gemini"
+        model = settings.GEMINI_MODEL
 
         row = db_session.query(
             func.count(Asset.item_id).label("total"),
@@ -1362,14 +1337,13 @@ async def _save_report_snapshot(db_session) -> Optional[str]:
 @router.get("/api/batch/stream")
 async def batch_stream():
     global _batch_started_at
-    provider = settings.AI_PROVIDER.lower()
     album_keys = list(_batch_album_keys)   # snapshot at stream open
     _cancel["batch"] = False               # reset cancel flag for this run
     _batch_started_at = None               # stream connected → cancel watchdog
 
     async def generate():
         try:
-            batch_fn = run_claude_batch if provider == "claude" else run_gemini_batch
+            batch_fn = run_gemini_batch
             async for event in batch_fn(album_keys=album_keys or None, cancel_flag=_cancel):
                 # Reset flag before yielding done so next POST /api/batch doesn't get 409
                 if event.get("type") in ("done", "rate_limit", "cancelled"):
@@ -1408,8 +1382,8 @@ async def export_report_csv(db: Session = Depends(get_db)):
     from sqlalchemy import func, case as _case
 
     price_in, price_out = _get_pricing()
-    provider = settings.AI_PROVIDER.lower()
-    model = settings.ANTHROPIC_MODEL if provider == "claude" else settings.GEMINI_MODEL
+    provider = "gemini"
+    model = settings.GEMINI_MODEL
 
     row = db.query(
         func.count(Asset.item_id).label("total"),
