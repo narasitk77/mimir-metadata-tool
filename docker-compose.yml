@@ -77,7 +77,7 @@ services:
     ports:
       - "${APP_PORT:-8765}:443"
     configs:
-      - source: caddyfile
+      - source: caddyfile_v2
         target: /etc/caddy/Caddyfile
     volumes:
       - caddy_data:/data
@@ -87,7 +87,7 @@ services:
 
 
 configs:
-  caddyfile:
+  caddyfile_v2:
     content: |
       {
           # On-demand TLS lets Caddy mint a cert for whichever hostname /
