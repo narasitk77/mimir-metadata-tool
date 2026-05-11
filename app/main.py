@@ -110,18 +110,23 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         return RedirectResponse(url=(settings.APP_ROOT_PATH or "") + "/auth/login")
 
 
-def _canonical_host() -> str | None:
+def _canonical_parts():
+    """Returns (scheme, netloc) parsed from GOOGLE_AUTH_REDIRECT_URI, or (None, None)."""
     uri = settings.GOOGLE_AUTH_REDIRECT_URI or ""
     if not uri:
-        return None
-    return urlparse(uri).netloc or None
+        return None, None
+    p = urlparse(uri)
+    return (p.scheme or None), (p.netloc or None)
 
 
 class CanonicalHostMiddleware(BaseHTTPMiddleware):
-    """Force every browser request onto the host registered in the OAuth
+    """Force every browser request onto the host/scheme registered in the OAuth
     redirect URI — otherwise the session cookie set during /auth/start
     won't be sent to /auth/callback (cross-host) and login fails with
-    'Invalid auth state'."""
+    'Invalid auth state'.
+
+    The scheme is taken from GOOGLE_AUTH_REDIRECT_URI so this works correctly
+    behind a TLS-terminating proxy (e.g. Caddy → HTTP-only app)."""
     async def dispatch(self, request: Request, call_next):
         if not _google_auth.is_configured():
             return await call_next(request)
@@ -129,15 +134,15 @@ class CanonicalHostMiddleware(BaseHTTPMiddleware):
         # Healthchecks / static assets should bypass — they hit localhost
         if path == "/healthz" or path.startswith("/static/"):
             return await call_next(request)
-        canonical = _canonical_host()
-        if not canonical:
+        canonical_scheme, canonical_host = _canonical_parts()
+        if not canonical_host:
             return await call_next(request)
         actual = (request.headers.get("host") or "").lower()
         # Allow internal probes (Docker healthcheck uses localhost:8000)
         if actual.startswith(("localhost", "127.0.0.1", "[::1]")):
             return await call_next(request)
-        if actual != canonical.lower():
-            target = f"{request.url.scheme}://{canonical}{path}"
+        if actual != canonical_host.lower():
+            target = f"{canonical_scheme or request.url.scheme}://{canonical_host}{path}"
             if request.url.query:
                 target += "?" + request.url.query
             return RedirectResponse(url=target, status_code=307)

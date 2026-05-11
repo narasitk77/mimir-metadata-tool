@@ -21,8 +21,8 @@ services:
     image: ghcr.io/narasitk77/mimir-metadata-tool:latest
     pull_policy: always
     container_name: mimir-metadata-tool
-    ports:
-      - "${APP_PORT:-8765}:8000"
+    expose:
+      - "8000"        # internal only — Caddy is the public face
     volumes:
       - mimir_data:/app/data
     environment:
@@ -69,8 +69,49 @@ services:
       start_period: 30s
       retries: 3
 
+  # ── Caddy reverse proxy with HTTPS (self-signed via Caddy's local CA) ─────
+  caddy:
+    image: caddy:2-alpine
+    container_name: mimir-caddy
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8765}:443"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - mimir-tool
+
+
+configs:
+  caddyfile:
+    content: |
+      {
+          # Quieter logs; default ACME endpoints not used because of `tls internal`
+          auto_https disable_redirects
+      }
+
+      192.168.21.220.nip.io {
+          tls internal
+          encode gzip
+
+          # Forward real client info so the app (and middleware) see HTTPS
+          reverse_proxy mimir-tool:8000 {
+              header_up X-Forwarded-Proto https
+              header_up X-Forwarded-Host {host}
+          }
+      }
+
+
 volumes:
   mimir_data:
     driver: local
   postgres_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
     driver: local
