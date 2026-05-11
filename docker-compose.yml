@@ -90,18 +90,22 @@ configs:
   caddyfile:
     content: |
       {
-          # Quieter logs; default ACME endpoints not used because of `tls internal`
+          # On-demand TLS lets Caddy mint a cert for whichever hostname /
+          # IP the client connects with — so raw-IP access works alongside
+          # 192.168.21.220.nip.io.
           auto_https disable_redirects
+          on_demand_tls {
+              ask http://mimir-tool:8000/healthz
+          }
       }
 
-      192.168.21.220.nip.io {
-          tls internal
+      :443 {
+          tls internal {
+              on_demand
+          }
           encode gzip
-
-          # Forward real client info so the app (and middleware) see HTTPS
           reverse_proxy mimir-tool:8000 {
               header_up X-Forwarded-Proto https
-              header_up X-Forwarded-Host {host}
           }
       }
 
