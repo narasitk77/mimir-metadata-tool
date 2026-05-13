@@ -40,21 +40,6 @@ class Settings(BaseSettings):
     ALLOWED_EMAILS: str = ""
     ADMIN_EMAILS:   str = ""
 
-    # Google Sheets integration — OAuth2 Web App
-    # Create OAuth2 credentials at console.cloud.google.com → APIs → Credentials
-    # Type: "Web application" — add redirect URI: {your-host}/ai-tool/api/sheets/callback
-    GOOGLE_OAUTH_CLIENT_ID: str = ""
-    GOOGLE_OAUTH_CLIENT_SECRET: str = ""
-    GOOGLE_SHEET_ID: str = "1UelzdSNpwWfEkU7JThuhf0irTKPJk-1Pvhh1-eub6B0"
-    # Redirect URI registered in Google Cloud Console (must match exactly)
-    GOOGLE_REDIRECT_URI: str = "https://mimir-metadata-tool.onrender.com/api/sheets/callback"
-    # Legacy service account (kept for backward compat, not used)
-    GOOGLE_SERVICE_ACCOUNT_JSON: str = ""
-
-    # Qdrant Vector DB
-    QDRANT_URL: str = "http://qdrant:6333"
-    QDRANT_COLLECTION: str = "mimir_assets"
-
     class Config:
         env_file = ".env"
         extra = "ignore"  # ignore unrelated env vars (APP_PORT, POSTGRES_*, …)
