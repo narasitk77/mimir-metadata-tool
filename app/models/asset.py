@@ -2,23 +2,6 @@ from sqlalchemy import Column, DateTime, Float, String, Text
 from app.database import Base
 
 
-def _extract_event(path: str) -> str:
-    """Lightweight duplicate of extract_event_from_path (avoids circular import)."""
-    import re
-    _SKIP = {"hires", "hi-res", "hi_res", "raw", "proxies", "proxy", "highres"}
-    parts = path.replace("\\", "/").split("/") if path else []
-    start = 2 if len(parts) >= 2 and parts[0].upper() == "PHOTOGRAPHER" else 0
-    best = ""
-    for seg in parts[start:]:
-        s = seg.strip()
-        if not s or s.upper() in {x.upper() for x in _SKIP} or len(s) <= 3:
-            continue
-        if " " in s or any("\u0E00" <= c <= "\u0E7F" for c in s):
-            return s
-        best = best or s
-    return best
-
-
 class Asset(Base):
     __tablename__ = "assets"
 

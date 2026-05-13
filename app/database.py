@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, text, inspect
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from app.config import settings
 
@@ -22,14 +22,6 @@ else:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
-
-def _ensure_person_table():
-    """Create persons table if it doesn't exist (safe no-op if already exists)."""
-    inspector = inspect(engine)
-    if "persons" not in inspector.get_table_names():
-        from app.models.person import Person  # noqa: F401 — registers with Base
-        Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["persons"]])
 
 
 def get_db():
