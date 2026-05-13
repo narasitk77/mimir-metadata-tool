@@ -1,5 +1,7 @@
 # Production / Portainer Stack (Web Editor)
 # Pulls pre-built image from GHCR — Postgres for persistent storage
+# LAN-test mode: plain HTTP on port 8765, no reverse proxy, no Google SSO required.
+# Re-introduce Caddy + SSO when going public on a real subdomain.
 services:
   postgres:
     image: postgres:16-alpine
@@ -21,8 +23,8 @@ services:
     image: ghcr.io/narasitk77/mimir-metadata-tool:latest
     pull_policy: always
     container_name: mimir-metadata-tool
-    expose:
-      - "8000"        # internal only — Caddy is the public face
+    ports:
+      - "${APP_PORT:-8765}:8000"
     volumes:
       - mimir_data:/app/data
     environment:
@@ -42,7 +44,7 @@ services:
       ITEMS_PER_PAGE: ${ITEMS_PER_PAGE:-100}
       GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-7000}
       BATCH_SIZE: ${BATCH_SIZE:-20}
-      # Google SSO gate — restricts access to @thestandard.co accounts
+      # Google SSO gate — leave GOOGLE_AUTH_CLIENT_ID empty during LAN testing to disable.
       GOOGLE_AUTH_CLIENT_ID: ${GOOGLE_AUTH_CLIENT_ID:-}
       GOOGLE_AUTH_CLIENT_SECRET: ${GOOGLE_AUTH_CLIENT_SECRET:-}
       GOOGLE_AUTH_REDIRECT_URI: ${GOOGLE_AUTH_REDIRECT_URI:-}
@@ -69,53 +71,9 @@ services:
       start_period: 30s
       retries: 3
 
-  # ── Caddy reverse proxy with HTTPS (self-signed via Caddy's local CA) ─────
-  caddy:
-    image: caddy:2-alpine
-    container_name: mimir-caddy
-    restart: unless-stopped
-    ports:
-      - "${APP_PORT:-8765}:443"
-    configs:
-      - source: caddyfile_v2
-        target: /etc/caddy/Caddyfile
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - mimir-tool
-
-
-configs:
-  caddyfile_v2:
-    content: |
-      {
-          # On-demand TLS lets Caddy mint a cert for whichever hostname /
-          # IP the client connects with — so raw-IP access works alongside
-          # 192.168.21.220.nip.io.
-          auto_https disable_redirects
-          on_demand_tls {
-              ask http://mimir-tool:8000/healthz
-          }
-      }
-
-      :443 {
-          tls internal {
-              on_demand
-          }
-          encode gzip
-          reverse_proxy mimir-tool:8000 {
-              header_up X-Forwarded-Proto https
-          }
-      }
-
 
 volumes:
   mimir_data:
     driver: local
   postgres_data:
-    driver: local
-  caddy_data:
-    driver: local
-  caddy_config:
     driver: local
