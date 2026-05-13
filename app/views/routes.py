@@ -243,7 +243,12 @@ async def auth_logout(request: Request):
 
 @router.get("/auth/me")
 async def auth_me(request: Request):
-    u = request.session.get("user")
+    # SessionMiddleware is only installed when SESSION_SECRET_KEY is set;
+    # without it, request.session raises AssertionError. Treat as anonymous.
+    try:
+        u = request.session.get("user")
+    except (AssertionError, AttributeError):
+        u = None
     if u:
         return {"authenticated": True, **u}
     return {"authenticated": False, "configured": _google_auth.is_configured()}
