@@ -2227,7 +2227,7 @@
       totalCostThb += a.cost_thb || 0;
       const hasWork = a.done > 0;
       return `<tr class="${hasWork ? '' : 'opacity-50'}">
-        <td><input type="checkbox" class="form-check-input push-album-check" data-album="${esc(a.name)}"
+        <td><input type="checkbox" class="form-check-input push-album-check" data-album="${esc(a.album_key||'')}"
              ${hasWork ? '' : 'disabled'} onchange="updatePushAlbumCount()"></td>
         <td><span class="text-light">${esc(a.name)}</span>
           ${a.error ? `<span class="badge bg-danger ms-1">${a.error} err</span>` : ''}

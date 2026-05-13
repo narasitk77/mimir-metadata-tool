@@ -196,11 +196,12 @@ async def _verify_persons(
 
 
 async def _fetch_exif(client: httpx.AsyncClient, asset: Asset) -> dict:
+    from app.controllers.mimir_controller import _auth_header
     exif_url = asset.exif_url
     if not exif_url:
         r = await client.get(
             f"{settings.MIMIR_BASE_URL}/api/v1/items/{asset.item_id}",
-            headers={"x-mimir-cognito-id-token": f"Bearer {settings.MIMIR_TOKEN}"},
+            headers=await _auth_header(),
             timeout=15,
         )
         if r.status_code == 200:

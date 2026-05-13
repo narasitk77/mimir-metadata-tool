@@ -86,6 +86,10 @@ _batch_album_keys: List[str] = []   # empty = run all pending
 # the flag auto-clears so the user isn't permanently locked out by a stuck flag.
 _batch_started_at: Optional[float] = None
 _STREAM_GRACE_SEC = 15.0
+# Serialise check-and-set on _running so two concurrent POSTs to /api/batch
+# (or /api/fetch) can't both pass the "is it running?" guard before either
+# sets the flag.
+_run_lock = asyncio.Lock()
 
 
 # ── Views ──────────────────────────────────────────────────────────────────────
@@ -599,7 +603,7 @@ async def get_report(db: Session = Depends(get_db)):
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
-        "provider": provider,
+        "provider": "gemini",
         "model": model,
         "price_input_per_m":  price_in,
         "price_output_per_m": price_out,
@@ -1176,24 +1180,28 @@ async def diagnostics(db: Session = Depends(get_db)):
 async def start_batch(body: BatchStartRequest = BatchStartRequest()):
     global _batch_album_keys, _batch_started_at
     import time as _time
-    # Auto-clear a stuck flag if the previous POST never had a stream connect
-    if (_running["batch"] and _batch_started_at
-            and _time.time() - _batch_started_at > _STREAM_GRACE_SEC):
-        logger.warning("Auto-clearing stuck batch flag (stream never connected)")
-        _running["batch"] = False
-    if _running["batch"] and not body.force:
-        raise HTTPException(status_code=409, detail="Batch already running")
-    if not settings.GEMINI_API_KEY:
-        raise HTTPException(status_code=400, detail="GEMINI_API_KEY not set")
-    pending_count = SessionLocal().query(Asset).filter(Asset.status == "pending").count()
-    if pending_count == 0:
-        raise HTTPException(status_code=400, detail="No pending assets — กด Fetch ก่อน")
-    _batch_album_keys = body.album_keys
-    _running["batch"] = True
-    _batch_started_at = _time.time()
+    async with _run_lock:
+        # Auto-clear a stuck flag if the previous POST never had a stream connect.
+        # Guard against None: the stream sets _batch_started_at = None when it
+        # connects, so subtraction would crash if a second POST arrives in that
+        # window.
+        if (_running["batch"] and _batch_started_at is not None
+                and _time.time() - _batch_started_at > _STREAM_GRACE_SEC):
+            logger.warning("Auto-clearing stuck batch flag (stream never connected)")
+            _running["batch"] = False
+        if _running["batch"] and not body.force:
+            raise HTTPException(status_code=409, detail="Batch already running")
+        if not settings.GEMINI_API_KEY:
+            raise HTTPException(status_code=400, detail="GEMINI_API_KEY not set")
+        pending_count = SessionLocal().query(Asset).filter(Asset.status == "pending").count()
+        if pending_count == 0:
+            raise HTTPException(status_code=400, detail="No pending assets — กด Fetch ก่อน")
+        _batch_album_keys = body.album_keys
+        _running["batch"] = True
+        _batch_started_at = _time.time()
     scope = f"{len(body.album_keys)} albums" if body.album_keys else "all pending"
-    return {"ok": True, "provider": provider,
-            "message": f"Batch started ({provider}, {scope}) — connect to /api/batch/stream"}
+    return {"ok": True, "provider": "gemini",
+            "message": f"Batch started (gemini, {scope}) — connect to /api/batch/stream"}
 
 
 @router.delete("/api/batch/reset")
