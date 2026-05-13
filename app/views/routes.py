@@ -63,9 +63,6 @@ from app.services.cognito_auth import (
     logout as _cognito_logout,
     get_status as _cognito_status,
 )
-from app.services import google_auth as _google_auth
-import secrets as _py_secrets
-
 import urllib.parse
 import xml.etree.ElementTree as _ET
 from app.database import SessionLocal, get_db
@@ -103,7 +100,7 @@ async def index(request: Request):
         "gemini_model": settings.GEMINI_MODEL,  # kept for compat
         "ai_provider": "Gemini",
         "ai_model": model,
-        "root_path": settings.APP_ROOT_PATH.rstrip("/"),
+        "root_path": "",
     })
 
 
@@ -177,156 +174,11 @@ async def healthz():
     return {"ok": True}
 
 
-# ── Google SSO gate (internal users only) ──────────────────────────────────────
-
-@router.get("/auth/login", response_class=HTMLResponse)
-async def auth_login(request: Request, error: str = ""):
-    """Login portal — shows a 'Sign in with Google' button."""
-    if not _google_auth.is_configured():
-        return HTMLResponse(
-            "<h1>SSO not configured</h1><p>GOOGLE_AUTH_CLIENT_ID / SECRET / REDIRECT_URI / SESSION_SECRET_KEY required</p>",
-            status_code=500,
-        )
-    return templates.TemplateResponse("login.html", {
-        "request": request,
-        "root_path": settings.APP_ROOT_PATH.rstrip("/"),
-        "error": error,
-        "allowed_domain": settings.ALLOWED_EMAIL_DOMAIN,
-    })
-
-
-@router.get("/auth/start")
-async def auth_start(request: Request):
-    """Initiate the OAuth redirect to Google. Called when user clicks the portal button."""
-    if not _google_auth.is_configured():
-        raise HTTPException(status_code=500, detail="SSO not configured")
-    state = _py_secrets.token_urlsafe(24)
-    request.session["oauth_state"] = state
-    return RedirectResponse(_google_auth.make_authorize_url(state))
-
-
-@router.get("/auth/callback", response_class=HTMLResponse)
-async def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
-    if error:
-        return HTMLResponse(f"<h1>Auth error</h1><p>{error}</p>", status_code=400)
-    expected = request.session.pop("oauth_state", None)
-    if not code or not state or state != expected:
-        return HTMLResponse("<h1>Invalid auth state</h1><p>Try logging in again.</p>", status_code=400)
-    try:
-        info = await _google_auth.exchange_code_for_user(code)
-    except Exception as e:
-        logger.warning(f"Google token exchange failed: {e}")
-        return HTMLResponse(f"<h1>Token exchange failed</h1><p>{e}</p>", status_code=502)
-    email = (info.get("email") or "").lower()
-    if not info.get("email_verified", False):
-        return HTMLResponse("<h1>Email not verified</h1>", status_code=403)
-    if not _google_auth.email_allowed(email):
-        return HTMLResponse(
-            f"""<div style="font-family:system-ui;max-width:480px;margin:80px auto;padding:24px;border:1px solid #f5c6cb;background:#fff5f5;border-radius:8px">
-                <h2 style="margin-top:0;color:#c1232b">Access denied</h2>
-                <p><strong>{email}</strong> ไม่ใช่บัญชี <code>@{settings.ALLOWED_EMAIL_DOMAIN}</code></p>
-                <p style="color:#777;font-size:.9em">เครื่องมือนี้สำหรับพนักงาน The Standard เท่านั้น</p>
-                <a href="{(settings.APP_ROOT_PATH or '') + '/auth/login'}" style="display:inline-block;margin-top:8px">← ลองใหม่ด้วยอีเมลอื่น</a>
-            </div>""",
-            status_code=403,
-        )
-    request.session["user"] = {
-        "email": email,
-        "name": info.get("name", ""),
-        "picture": info.get("picture", ""),
-        "is_admin": _google_auth.email_is_admin(email),
-    }
-    return RedirectResponse(settings.APP_ROOT_PATH or "/")
-
-
-@router.post("/auth/logout")
-async def auth_logout(request: Request):
-    request.session.pop("user", None)
-    return {"ok": True}
-
-
+# Anonymous auth probe — the dashboard polls this on load. Always returns
+# the same shape so the JS doesn't need to special-case "no SSO" deploys.
 @router.get("/auth/me")
-async def auth_me(request: Request):
-    # SessionMiddleware is only installed when SESSION_SECRET_KEY is set;
-    # without it, request.session raises AssertionError. Treat as anonymous.
-    try:
-        u = request.session.get("user")
-    except (AssertionError, AttributeError):
-        u = None
-    if u:
-        return {"authenticated": True, **u}
-    return {"authenticated": False, "configured": _google_auth.is_configured()}
-
-
-# ── Admin: manage allowed users ───────────────────────────────────────────────
-
-def _require_admin(request: Request):
-    u = request.session.get("user") or {}
-    if not _google_auth.email_is_admin(u.get("email", "")):
-        raise HTTPException(status_code=403, detail="Admin only")
-    return u
-
-
-@router.get("/admin/users", response_class=HTMLResponse)
-async def admin_users_page(request: Request):
-    _require_admin(request)
-    return templates.TemplateResponse("admin_users.html", {
-        "request": request,
-        "root_path": settings.APP_ROOT_PATH.rstrip("/"),
-    })
-
-
-class AllowedUserAdd(BaseModel):
-    email: str
-    is_admin: bool = False
-
-
-@router.get("/api/admin/users")
-async def list_allowed_users(request: Request, db: Session = Depends(get_db)):
-    _require_admin(request)
-    from app.models.allowed_user import AllowedUser
-    rows = db.query(AllowedUser).order_by(AllowedUser.email).all()
-    env_emails = _google_auth._env_allowed_emails()
-    env_admins = _google_auth._env_admin_emails()
-    env_entries = sorted(env_emails - {r.email.lower() for r in rows})
-    return {
-        "env": [{"email": e, "is_admin": e in env_admins, "source": "env"} for e in env_entries],
-        "db":  [r.to_dict() | {"source": "db"} for r in rows],
-    }
-
-
-@router.post("/api/admin/users")
-async def add_allowed_user(body: AllowedUserAdd, request: Request, db: Session = Depends(get_db)):
-    me = _require_admin(request)
-    from app.models.allowed_user import AllowedUser
-    email = body.email.strip().lower()
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="invalid email")
-    domain = settings.ALLOWED_EMAIL_DOMAIN.lower().lstrip("@")
-    if domain and not email.endswith("@" + domain):
-        raise HTTPException(status_code=400, detail=f"email must end with @{domain}")
-    existing = db.query(AllowedUser).filter(AllowedUser.email == email).first()
-    if existing:
-        existing.is_admin = bool(body.is_admin)
-        db.commit()
-        return existing.to_dict()
-    row = AllowedUser(email=email, is_admin=bool(body.is_admin), added_by=me.get("email", ""))
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row.to_dict()
-
-
-@router.delete("/api/admin/users/{user_id}")
-async def remove_allowed_user(user_id: int, request: Request, db: Session = Depends(get_db)):
-    _require_admin(request)
-    from app.models.allowed_user import AllowedUser
-    row = db.query(AllowedUser).filter(AllowedUser.id == user_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="not found")
-    db.delete(row)
-    db.commit()
-    return {"ok": True}
+async def auth_me():
+    return {"authenticated": False, "configured": False}
 
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────
@@ -1160,8 +1012,6 @@ async def diagnostics(db: Session = Depends(get_db)):
         "provider": "gemini",
         "model": settings.GEMINI_MODEL,
         "gemini_key_set": bool(settings.GEMINI_API_KEY),
-        "google_sso_configured": _google_auth.is_configured(),
-        "allowed_email_domain": settings.ALLOWED_EMAIL_DOMAIN,
         "pending_assets": pending,
         "processing_assets": processing,
         "batch_running": _running["batch"],
