@@ -392,6 +392,11 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
             skipped_uuid: list[str] = []
             resp = None
 
+            # Also capture the field name from the error so we can drop the right one
+            # even when bad_val is the comma-joined form of a list payload.
+            _invalid_field_pat = _re.compile(r'for field:\s*[\'"]?([^\'"]+?)[\'"]?\s*$',
+                                             _re.IGNORECASE | _re.MULTILINE)
+
             for _attempt in range(len(uuid_fields) + 1):   # max n+1 attempts
                 formdata = {
                     **current_uuid,
@@ -407,20 +412,53 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
                     break
                 if resp.status_code == 400 and current_uuid:
                     m = _invalid_pat.search(resp.text)
+                    field_m = _invalid_field_pat.search(resp.text)
+                    bad_val = m.group(1) if m else ""
+                    bad_field = field_m.group(1).strip() if field_m else ""
                     removed = False
-                    if m:
-                        bad_val = m.group(1)
+                    # Match against every shape the field value might take:
+                    #   - "business" (single string)
+                    #   - ["business","lifestyle"] (multi-value list → Mimir
+                    #     echoes the joined "business,lifestyle" in its error)
+                    for k in list(current_uuid.keys()):
+                        v = current_uuid[k]
+                        candidates = []
+                        if isinstance(v, str):
+                            candidates.append(v)
+                        elif isinstance(v, list):
+                            candidates.append(",".join(str(x) for x in v))
+                            if v:
+                                candidates.append(str(v[0]))
+                        else:
+                            candidates.append(str(v))
+                        if bad_val and bad_val in candidates:
+                            skipped_uuid.append(k)
+                            del current_uuid[k]
+                            logger.warning(f"UUID field {k[:8]} ({bad_field or '?'}) skipped — invalid value '{bad_val}'")
+                            removed = True
+                            break
+                    if not removed and bad_field:
+                        # Mimir told us the field name explicitly but value
+                        # match failed — drop the field whose db column name
+                        # contains that field name fragment (best effort).
+                        for k in list(current_uuid.keys()):
+                            # k is a UUID — we don't have a name map back to it
+                            # easily. Skip; let the next branch clear everything.
+                            pass
+                    if not removed:
+                        # Last-resort fallback: drop the field whose value gets
+                        # mentioned in the response body, even partially.
                         for k in list(current_uuid.keys()):
                             v = current_uuid[k]
-                            v_str = v if isinstance(v, str) else (v[0] if isinstance(v, list) and v else str(v))
-                            if v_str == bad_val:
+                            v_str = ",".join(str(x) for x in v) if isinstance(v, list) else str(v)
+                            if v_str and v_str in resp.text:
                                 skipped_uuid.append(k)
                                 del current_uuid[k]
-                                logger.warning(f"UUID field {k[:8]} skipped — invalid value '{bad_val}'")
+                                logger.warning(f"UUID field {k[:8]} skipped via fallback — value '{v_str}' found in error body")
                                 removed = True
                                 break
                     if not removed:
-                        # Can't identify which field, drop all UUID fields
+                        # Truly unparseable — drop all UUID fields as last resort
                         skipped_uuid.extend(current_uuid.keys())
                         current_uuid = {}
                         logger.warning(f"Cleared all UUID fields after unparseable 400: {resp.text[:200]}")
