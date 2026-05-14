@@ -186,11 +186,27 @@ async def auth_me():
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────
 
-# Pricing (USD per 1M tokens) — Gemini 2.5 Flash
-_PRICING = {"input": 0.15, "output": 0.60}
+# Pricing (USD per 1M tokens) — source: https://ai.google.dev/gemini-api/docs/pricing
+# Paid-tier rates. Free tier is $0 but we display the equivalent paid cost so
+# the team can budget when they outgrow the free quota.
+_PRICING_PER_MODEL = {
+    "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
+    "gemini-2.5-flash":      {"input": 0.30, "output": 2.50},
+    "gemini-2.5-pro":        {"input": 1.25, "output": 10.00},
+    # Generation-2 fallbacks (legacy, in case GEMINI_MODEL points there)
+    "gemini-2.0-flash":      {"input": 0.10, "output": 0.40},
+    "gemini-2.0-flash-lite": {"input": 0.075, "output": 0.30},
+}
 
 def _get_pricing():
-    return _PRICING["input"], _PRICING["output"]
+    model = (settings.GEMINI_MODEL or "").lower()
+    # exact match first, then prefix match for variants like "...-001"
+    if model in _PRICING_PER_MODEL:
+        p = _PRICING_PER_MODEL[model]
+    else:
+        p = next((v for k, v in _PRICING_PER_MODEL.items() if model.startswith(k)),
+                 _PRICING_PER_MODEL["gemini-2.5-flash"])
+    return p["input"], p["output"]
 
 PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M = _get_pricing()
 
