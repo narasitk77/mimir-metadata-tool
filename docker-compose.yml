@@ -29,37 +29,22 @@ services:
       - mimir_data:/app/data
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-mimir}:${POSTGRES_PASSWORD:-mimir_secret}@postgres:5432/${POSTGRES_DB:-mimir_metadata}
+      # Mimir DAM
       MIMIR_BASE_URL: ${MIMIR_BASE_URL:-https://apac.mjoll.no}
-      # Static token (expires ~1h) — leave empty and use Cognito SRP below for auto-refresh
+      # Use either a static token (expires ~1h) or Cognito SRP (auto-refresh)
       MIMIR_TOKEN: ${MIMIR_TOKEN:-}
-      # Cognito SRP auth (preferred — token auto-refreshes every 55 min)
       MIMIR_COGNITO_USER_POOL_ID: ${MIMIR_COGNITO_USER_POOL_ID:-}
       MIMIR_COGNITO_CLIENT_ID: ${MIMIR_COGNITO_CLIENT_ID:-}
       MIMIR_USERNAME: ${MIMIR_USERNAME:-}
       MIMIR_PASSWORD: ${MIMIR_PASSWORD:-}
       FOLDER_ID: ${FOLDER_ID}
-      # Gemini API (only supported AI provider)
+      # Gemini API
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      # Processing rate
       ITEMS_PER_PAGE: ${ITEMS_PER_PAGE:-100}
       GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-7000}
       BATCH_SIZE: ${BATCH_SIZE:-20}
-      # Google SSO gate — leave GOOGLE_AUTH_CLIENT_ID empty during LAN testing to disable.
-      GOOGLE_AUTH_CLIENT_ID: ${GOOGLE_AUTH_CLIENT_ID:-}
-      GOOGLE_AUTH_CLIENT_SECRET: ${GOOGLE_AUTH_CLIENT_SECRET:-}
-      GOOGLE_AUTH_REDIRECT_URI: ${GOOGLE_AUTH_REDIRECT_URI:-}
-      ALLOWED_EMAIL_DOMAIN: ${ALLOWED_EMAIL_DOMAIN:-thestandard.co}
-      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-}
-      # Whitelist & admin (comma-separated emails)
-      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      # Google Sheets OAuth (optional — uses same Client ID as SSO)
-      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
-      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
-      GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID:-}
-      # Sub-path when running behind reverse proxy (e.g. "/ai-tool"); leave empty otherwise
-      APP_ROOT_PATH: ${APP_ROOT_PATH:-}
     depends_on:
       postgres:
         condition: service_healthy
