@@ -429,15 +429,24 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
 
         if resp and resp.status_code == 200:
             sent = list(current_uuid.keys())
+            # Capture Mimir's confirmation body so the audit trail can prove
+            # the write was actually accepted (not just a 200 echo with no change).
+            resp_excerpt = resp.text[:400] if resp.text else ""
             if skipped_uuid:
                 logger.info(f"Push OK: {item_id[:8]} | sent UUID: {[k[:8] for k in sent]} | skipped: {[k[:8] for k in skipped_uuid]}")
-                return {"ok": True, "uuid_fields_sent": sent, "uuid_fields_skipped": skipped_uuid}
+                return {"ok": True, "uuid_fields_sent": sent, "uuid_fields_skipped": skipped_uuid,
+                        "status_code": 200, "response_excerpt": resp_excerpt,
+                        "fields_pushed": list(formdata.keys())}
             logger.info(f"Push OK: {item_id[:8]} | UUID fields: {[k[:8] for k in sent]}")
-            return {"ok": True, "uuid_fields_sent": sent}
+            return {"ok": True, "uuid_fields_sent": sent,
+                    "status_code": 200, "response_excerpt": resp_excerpt,
+                    "fields_pushed": list(formdata.keys())}
 
-        err_text = resp.text[:300] if resp else "no response"
-        logger.error(f"Push FAILED {item_id[:8]}: HTTP {resp.status_code if resp else '?'}\n{err_text}")
-        return {"ok": False, "error": f"HTTP {resp.status_code if resp else '?'}: {err_text}"}
+        err_text = resp.text[:500] if resp else "no response"
+        status_code = resp.status_code if resp else 0
+        logger.error(f"Push FAILED {item_id[:8]}: HTTP {status_code}\n{err_text}")
+        return {"ok": False, "error": f"HTTP {status_code}: {err_text}",
+                "status_code": status_code, "response_excerpt": err_text}
 
     finally:
         db.close()

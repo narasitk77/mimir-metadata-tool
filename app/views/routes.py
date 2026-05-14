@@ -1377,12 +1377,16 @@ async def push_one(item_id: str):
     result = await push_metadata_to_mimir(item_id)
     if result.get("ok"):
         audit_log("push", target=item_id, status="ok",
-                  message="Pushed to Mimir",
+                  message=f"HTTP {result.get('status_code', '?')} — {result.get('response_excerpt', '')[:200]}",
                   details={"uuid_fields_sent": result.get("uuid_fields_sent", []),
-                           "uuid_fields_skipped": result.get("uuid_fields_skipped", [])})
+                           "uuid_fields_skipped": result.get("uuid_fields_skipped", []),
+                           "fields_pushed": result.get("fields_pushed", []),
+                           "response_excerpt": result.get("response_excerpt", "")})
     else:
         audit_log("push", target=item_id, status="error",
-                  message=str(result.get("error", "unknown"))[:500])
+                  message=str(result.get("error", "unknown"))[:500],
+                  details={"status_code": result.get("status_code"),
+                           "response_excerpt": result.get("response_excerpt", "")})
         raise HTTPException(status_code=502, detail=result["error"])
     return result
 
@@ -1413,13 +1417,17 @@ async def push_all(db: Session = Depends(get_db)):
             if result.get("ok"):
                 ok_count += 1
                 audit_log("push", target=item_id, status="ok",
-                          message="Pushed to Mimir",
+                          message=f"HTTP {result.get('status_code', '?')} — {result.get('response_excerpt', '')[:200]}",
                           details={"uuid_fields_sent": result.get("uuid_fields_sent", []),
-                                   "uuid_fields_skipped": result.get("uuid_fields_skipped", [])})
+                                   "uuid_fields_skipped": result.get("uuid_fields_skipped", []),
+                                   "fields_pushed": result.get("fields_pushed", []),
+                                   "response_excerpt": result.get("response_excerpt", "")})
             else:
                 errors += 1
                 audit_log("push", target=item_id, status="error",
-                          message=str(result.get("error", "unknown"))[:500])
+                          message=str(result.get("error", "unknown"))[:500],
+                          details={"status_code": result.get("status_code"),
+                                   "response_excerpt": result.get("response_excerpt", "")})
             await queue.put({
                 "item_id": item_id,
                 "ok": result.get("ok", False),
