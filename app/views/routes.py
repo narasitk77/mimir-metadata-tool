@@ -1183,14 +1183,12 @@ async def batch_stream():
     album_keys = list(_batch_album_keys)   # snapshot at stream open
     _cancel["batch"] = False               # reset cancel flag for this run
     _batch_started_at = None               # stream connected → cancel watchdog
+    _running["batch"] = True               # mark running so /api/stats reflects it
 
     async def generate():
         try:
             batch_fn = run_gemini_batch
             async for event in batch_fn(album_keys=album_keys or None, cancel_flag=_cancel):
-                # Reset flag before yielding done so next POST /api/batch doesn't get 409
-                if event.get("type") in ("done", "rate_limit", "cancelled"):
-                    _running["batch"] = False
                 if event.get("type") == "done":
                     db = SessionLocal()
                     try:
@@ -1201,13 +1199,22 @@ async def batch_stream():
                         db.close()
                 yield f"data: {json.dumps(event)}\n\n"
                 await asyncio.sleep(0)
-                if event.get("type") in ("rate_limit", "cancelled"):
+                if event.get("type") in ("done", "rate_limit", "cancelled"):
+                    _running["batch"] = False
                     return
         except Exception as exc:
-            _running["batch"] = False
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:
-            _running["batch"] = False  # safety net
+            # If client disconnected mid-batch (no 'done' event), keep _running True
+            # so the frontend's auto-reconnect can re-open the stream and continue
+            # — but only if there are still pending assets. Otherwise reset.
+            db = SessionLocal()
+            try:
+                still_pending = db.query(Asset).filter(Asset.status == "pending").count()
+                if still_pending == 0:
+                    _running["batch"] = False
+            finally:
+                db.close()
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

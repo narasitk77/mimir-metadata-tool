@@ -1855,17 +1855,45 @@
     showProgress(`กำลังวิเคราะห์ภาพด้วย AI… (${scope})`, 'batch');
     let lastEvent = null;
     let batchDone = false;
-    const es = new EventSource(_ROOT+'/api/batch/stream');
-    es.onmessage = e => {
+    let reconnectAttempts = 0;
+    let batchStartTime = Date.now();
+    let lastProcessed = 0;
+    let es = null;
+    const MAX_RECONNECTS = 5;
+
+    function formatETA(remaining, ratePerSec) {
+      if (!ratePerSec || remaining <= 0) return '';
+      const sec = remaining / ratePerSec;
+      if (sec < 60) return `~${Math.ceil(sec)}s`;
+      const min = Math.ceil(sec / 60);
+      return `~${min} นาที`;
+    }
+
+    function connectStream() {
+      es = new EventSource(_ROOT+'/api/batch/stream');
+      es.onmessage = e => {
       const d = JSON.parse(e.data);
       if (d.type === 'progress') {
         const done = d.processed, errs = d.errors, total = d.total;
         const current = done + errs;
+        // Reset reconnect counter once we see real data
+        reconnectAttempts = 0;
+        // Compute rate + ETA
+        const elapsedSec = (Date.now() - batchStartTime) / 1000;
+        const rate = elapsedSec > 5 && current > 0 ? current / elapsedSec : 0;
+        const eta = formatETA(total - current, rate);
+        const ratePerMin = rate ? `${(rate * 60).toFixed(1)}/min` : '';
+        const statusBits = [];
+        if (d.current) statusBits.push(`วิเคราะห์: ${d.current}`);
+        else statusBits.push('กำลังประมวลผล…');
+        if (eta) statusBits.push(`ETA ${eta}`);
+        if (ratePerMin) statusBits.push(ratePerMin);
         setProgress(current, total,
-          d.current ? `วิเคราะห์: ${d.current}` : `กำลังประมวลผล…`,
+          statusBits.join(' • '),
           { done, remaining: total - current, errors: errs });
         if (d.current) appendLog(`[${done}/${total}] ${d.current}`);
         lastEvent = d;
+        lastProcessed = current;
       } else if (d.type === 'done') {
         batchDone = true;
         setProgress(d.total, d.total, `✓ เสร็จสิ้น — ${d.processed} ภาพ, ${d.errors} error`,
@@ -1907,12 +1935,30 @@
         document.getElementById('btn-stop-batch').style.display   = 'none';
         document.getElementById('btn-batch').style.display        = '';
       }
-    };
-    // onerror fires on normal connection-close too — only log if batch didn't finish cleanly
-    es.onerror = () => {
-      if (!batchDone) appendLog('✗ Stream disconnected');
-      es.close(); btn.disabled = false;
-    };
+      };  // end es.onmessage
+
+      // Auto-reconnect on connection drop (Render free spin-down, network glitch, etc.)
+      // Don't reconnect on clean batch finish — batchDone flag guards against that.
+      es.onerror = () => {
+        es.close();
+        if (batchDone) { btn.disabled = false; return; }
+        if (reconnectAttempts >= MAX_RECONNECTS) {
+          appendLog(`✗ Stream disconnected — เกิน ${MAX_RECONNECTS} retries แล้ว กด Run AI Batch ใหม่`);
+          btn.disabled = false;
+          return;
+        }
+        reconnectAttempts += 1;
+        const wait = Math.min(2000 + reconnectAttempts * 1000, 8000);
+        appendLog(`✗ Stream disconnected — reconnecting (${reconnectAttempts}/${MAX_RECONNECTS}) in ${wait/1000}s…`);
+        setTimeout(() => {
+          // Re-establish the SSE — the backend stream will resume processing
+          // the next pending asset because POST /api/batch already set the flag.
+          connectStream();
+        }, wait);
+      };
+    }  // end connectStream
+
+    connectStream();
   }
 
   async function pushAll() {

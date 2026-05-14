@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Processing
     ITEMS_PER_PAGE: int = 100
-    GEMINI_DELAY_MS: int = 7000  # 7s = ~8 req/min, below free-tier 10 RPM
+    GEMINI_DELAY_MS: int = 6000  # 6s = 10 req/min, right at free-tier 10 RPM cap
     BATCH_SIZE: int = 20
 
     # Gemini Free Tier limits (gemini-2.5-flash)
