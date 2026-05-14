@@ -53,6 +53,7 @@ class BulkReanalyzeRequest(BaseModel):
     context_urls: List[str] = []
     context_text: str = ""
 
+from app.audit import log as audit_log
 from app.config import settings
 from app.controllers.gemini_controller import run_gemini_batch, _analyze_one as _gemini_analyze
 from app.controllers.mimir_controller import discover_hires_folders, extract_folder_id, fetch_all_items, push_metadata_to_mimir, _auth_header
@@ -67,6 +68,7 @@ import urllib.parse
 import xml.etree.ElementTree as _ET
 from app.database import SessionLocal, get_db
 from app.models.asset import Asset
+from app.models.audit_log import AuditLog
 from app.models.person import Person
 
 logger = logging.getLogger(__name__)
@@ -314,6 +316,8 @@ async def clear_assets(db: Session = Depends(get_db)):
     count = db.query(Asset).count()
     db.query(Asset).delete()
     db.commit()
+    audit_log("clear_db", target="all", message=f"Cleared {count} assets",
+              details={"count": count})
     # Also clear image cache — no point keeping files for deleted assets
     cache_deleted = clear_image_cache()
     return {"deleted": count, "cache_cleared": cache_deleted}
@@ -722,9 +726,12 @@ async def reset_asset(item_id: str, db: Session = Depends(get_db)):
     asset = db.query(Asset).filter(Asset.item_id == item_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
+    prev_status = asset.status
     asset.status = "pending"
     asset.error_log = ""
     db.commit()
+    audit_log("reset", target=item_id,
+              message=f"Reset to pending (was: {prev_status})")
     return {"ok": True}
 
 
@@ -844,6 +851,9 @@ async def start_fetch(body: FetchRequest):
     _active_folder_ids = ids
     _active_folder_contexts = ctxs[:len(ids)]
     _running["fetch"] = True
+    audit_log("fetch_start", target=",".join(ids),
+              message=f"Fetch {len(ids)} folder(s) from Mimir",
+              details={"folder_ids": ids})
     return {"ok": True, "folder_ids": ids, "count": len(ids)}
 
 
@@ -1046,6 +1056,9 @@ async def start_batch(body: BatchStartRequest = BatchStartRequest()):
         _running["batch"] = True
         _batch_started_at = _time.time()
     scope = f"{len(body.album_keys)} albums" if body.album_keys else "all pending"
+    audit_log("batch_start", target=",".join(body.album_keys) or "all",
+              message=f"Batch start ({scope}, {pending_count} pending)",
+              details={"album_keys": body.album_keys, "pending": pending_count, "force": body.force})
     return {"ok": True, "provider": "gemini",
             "message": f"Batch started (gemini, {scope}) — connect to /api/batch/stream"}
 
@@ -1326,30 +1339,114 @@ async def export_report_csv(db: Session = Depends(get_db)):
     )
 
 
+# ── API: Audit log (read-only) ────────────────────────────────────────────────
+
+@router.get("/api/audit-log")
+async def list_audit_log(
+    action: str = "",
+    status: str = "",
+    target: str = "",
+    page: int = 1,
+    per_page: int = 50,
+    db: Session = Depends(get_db),
+):
+    """Read recent audit entries — newest first. Supports filtering by action,
+    status, or target substring. Use ?action=push&status=error to debug push failures."""
+    q = db.query(AuditLog)
+    if action:
+        q = q.filter(AuditLog.action == action)
+    if status:
+        q = q.filter(AuditLog.status == status)
+    if target:
+        q = q.filter(AuditLog.target.contains(target))
+    total = q.count()
+    rows = (q.order_by(AuditLog.id.desc())
+              .offset(max(0, (page - 1) * per_page))
+              .limit(min(max(per_page, 1), 500))
+              .all())
+    return {
+        "total":    total,
+        "page":     page,
+        "per_page": per_page,
+        "items":    [r.to_dict() for r in rows],
+    }
+
+
 @router.post("/api/assets/{item_id}/push")
 async def push_one(item_id: str):
     result = await push_metadata_to_mimir(item_id)
-    if not result["ok"]:
+    if result.get("ok"):
+        audit_log("push", target=item_id, status="ok",
+                  message="Pushed to Mimir",
+                  details={"uuid_fields_sent": result.get("uuid_fields_sent", []),
+                           "uuid_fields_skipped": result.get("uuid_fields_skipped", [])})
+    else:
+        audit_log("push", target=item_id, status="error",
+                  message=str(result.get("error", "unknown"))[:500])
         raise HTTPException(status_code=502, detail=result["error"])
     return result
 
 
+_PUSH_PARALLEL = 3   # concurrent Mimir POSTs — Mimir handles 3 cleanly, 5+ trips throttling
+
+
 @router.post("/api/push-all")
 async def push_all(db: Session = Depends(get_db)):
-    """Push all 'done' assets to Mimir sequentially."""
+    """Push all 'done' assets to Mimir with bounded concurrency + audit log."""
     done_ids = [a.item_id for a in db.query(Asset).filter(Asset.status == "done").all()]
+    total = len(done_ids)
+    audit_log("push_all_start", target="all", message=f"Push {total} done assets",
+              details={"count": total})
 
-    async def generate():
-        ok_count = errors = 0
-        for item_id in done_ids:
-            result = await push_metadata_to_mimir(item_id)
-            if result["ok"]:
+    sem = asyncio.Semaphore(_PUSH_PARALLEL)
+    queue: asyncio.Queue = asyncio.Queue()
+    ok_count = 0
+    errors = 0
+
+    async def push_one_with_audit(item_id: str):
+        nonlocal ok_count, errors
+        async with sem:
+            try:
+                result = await push_metadata_to_mimir(item_id)
+            except Exception as exc:
+                result = {"ok": False, "error": f"exception: {exc}"}
+            if result.get("ok"):
                 ok_count += 1
+                audit_log("push", target=item_id, status="ok",
+                          message="Pushed to Mimir",
+                          details={"uuid_fields_sent": result.get("uuid_fields_sent", []),
+                                   "uuid_fields_skipped": result.get("uuid_fields_skipped", [])})
             else:
                 errors += 1
-            yield f"data: {json.dumps({'item_id': item_id, 'ok': result['ok'], 'ok_total': ok_count, 'errors': errors, 'total': len(done_ids)})}\n\n"
-            await asyncio.sleep(0.3)
-        yield f"data: {json.dumps({'type': 'done', 'ok_total': ok_count, 'errors': errors})}\n\n"
+                audit_log("push", target=item_id, status="error",
+                          message=str(result.get("error", "unknown"))[:500])
+            await queue.put({
+                "item_id": item_id,
+                "ok": result.get("ok", False),
+                "ok_total": ok_count,
+                "errors": errors,
+                "total": total,
+                **({"error": result.get("error")} if not result.get("ok") else {}),
+            })
+
+    async def runner():
+        await asyncio.gather(*(push_one_with_audit(i) for i in done_ids))
+        await queue.put({"type": "done", "ok_total": ok_count, "errors": errors})
+
+    async def generate():
+        task = asyncio.create_task(runner())
+        try:
+            while True:
+                event = await queue.get()
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") == "done":
+                    break
+        finally:
+            task.cancel()
+            audit_log("push_all_done", target="all",
+                      status="ok" if errors == 0 else "error",
+                      message=f"Push {total} done assets → {ok_count} ok, {errors} error",
+                      details={"ok": ok_count, "errors": errors, "total": total})
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

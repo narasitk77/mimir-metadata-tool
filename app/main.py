@@ -12,6 +12,7 @@ from fastapi import FastAPI
 
 from app.database import Base, engine, run_migrations
 from app.models.person import Person  # noqa: F401 — register with Base
+from app.models.audit_log import AuditLog  # noqa: F401 — register with Base
 from app.views.routes import router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
