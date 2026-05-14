@@ -69,6 +69,7 @@ import xml.etree.ElementTree as _ET
 from app.database import SessionLocal, get_db
 from app.models.asset import Asset
 from app.models.audit_log import AuditLog
+from app.models.mimir_option import MimirOption
 from app.models.person import Person
 
 logger = logging.getLogger(__name__)
@@ -1337,6 +1338,44 @@ async def export_report_csv(db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=report_{ts}.csv"},
     )
+
+
+# ── API: Mimir option cache (self-learning valid-value memory) ───────────────
+
+@router.get("/api/mimir-options")
+async def list_mimir_options(field_uuid: str = "", db: Session = Depends(get_db)):
+    """List Mimir option values we've observed being accepted.
+
+    Optional ?field_uuid=<uuid> narrows to a single field. The cache is
+    populated automatically every time Mimir returns 200 on a push, so the
+    list grows organically as the team uses the tool."""
+    q = db.query(MimirOption)
+    if field_uuid:
+        q = q.filter(MimirOption.field_uuid == field_uuid)
+    rows = q.order_by(MimirOption.field_uuid, MimirOption.accept_count.desc()).all()
+    grouped: dict = {}
+    for r in rows:
+        grouped.setdefault(r.field_uuid, []).append({
+            "value":        r.option_value,
+            "accept_count": r.accept_count,
+            "last_seen":    r.last_seen.isoformat() if r.last_seen else None,
+        })
+    return {"total_fields": len(grouped), "total_options": len(rows), "by_field": grouped}
+
+
+@router.delete("/api/mimir-options")
+async def reset_mimir_options(field_uuid: str = "", db: Session = Depends(get_db)):
+    """Wipe the option cache — useful if Mimir adds new options and we want
+    the system to relearn. Pass ?field_uuid=<uuid> to wipe one field only."""
+    q = db.query(MimirOption)
+    if field_uuid:
+        q = q.filter(MimirOption.field_uuid == field_uuid)
+    count = q.count()
+    q.delete(synchronize_session=False)
+    db.commit()
+    audit_log("mimir_options_reset", target=field_uuid or "all",
+              message=f"Cleared {count} cached option(s)")
+    return {"ok": True, "deleted": count}
 
 
 # ── API: Audit log (read-only) ────────────────────────────────────────────────

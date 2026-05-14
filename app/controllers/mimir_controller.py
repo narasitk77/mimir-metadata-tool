@@ -1,13 +1,77 @@
 import asyncio
 import logging
 import re as _re
+from datetime import datetime
 from typing import AsyncGenerator, List, Optional
 
 import httpx
 from app.config import settings
 from app.database import SessionLocal
 from app.models.asset import Asset
+from app.models.mimir_option import MimirOption
 from app.services.cognito_auth import get_token as _get_cognito_token
+
+
+def _filter_through_cache(uuid_fields: dict) -> dict:
+    """Filter list-typed UUID payloads through MimirOption cache.
+
+    For each (uuid_key, list_value) pair, keep only values previously confirmed
+    by Mimir. If the cache has no entries for a field, leave the field untouched
+    (discovery mode — let Mimir teach us). If filtering empties the list, drop
+    the field entirely so Mimir doesn't see []."""
+    filtered: dict = {}
+    db = SessionLocal()
+    try:
+        for k, v in uuid_fields.items():
+            if not isinstance(v, list) or not v:
+                filtered[k] = v
+                continue
+            known = {row.option_value for row in
+                     db.query(MimirOption).filter(MimirOption.field_uuid == k).all()}
+            if not known:
+                # No cache yet → send full list, let Mimir reject + we'll learn
+                filtered[k] = v
+                continue
+            kept = [item for item in v if str(item) in known]
+            if kept:
+                filtered[k] = kept
+    except Exception as exc:
+        logger.warning(f"Cache filter failed, sending raw: {exc}")
+        return uuid_fields
+    finally:
+        db.close()
+    return filtered
+
+
+def _record_accepted(accepted_payload: dict) -> None:
+    """Persist values Mimir just accepted so the next push pre-filters them."""
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        for k, v in accepted_payload.items():
+            if not k or not v:
+                continue
+            values = v if isinstance(v, list) else [v]
+            for item in values:
+                s = str(item).strip()
+                if not s:
+                    continue
+                row = (db.query(MimirOption)
+                         .filter(MimirOption.field_uuid == k,
+                                 MimirOption.option_value == s)
+                         .first())
+                if row:
+                    row.accept_count = (row.accept_count or 0) + 1
+                    row.last_seen = now
+                else:
+                    db.add(MimirOption(field_uuid=k, option_value=s,
+                                       accept_count=1, last_seen=now))
+        db.commit()
+    except Exception as exc:
+        logger.warning(f"Option cache record failed: {exc}")
+        db.rollback()
+    finally:
+        db.close()
 
 
 async def _auth_header() -> dict:
@@ -378,6 +442,11 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
                     except Exception:
                         pass
 
+            # Pre-filter through self-learning cache so we never retry the same
+            # value Mimir already rejected in a previous push. First-time fields
+            # bypass the filter (cache is empty → discovery mode).
+            uuid_fields = _filter_through_cache(uuid_fields)
+
             # ── Smart retry loop ───────────────────────────────────────────────
             # Mimir returns 400 when a UUID field value isn't a valid option.
             # Parse the error to find which value was rejected, drop that UUID
@@ -467,6 +536,9 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
 
         if resp and resp.status_code == 200:
             sent = list(current_uuid.keys())
+            # Record accepted values so the next push pre-filters them through
+            # the cache and avoids re-learning the same lesson.
+            _record_accepted(current_uuid)
             # Capture Mimir's confirmation body so the audit trail can prove
             # the write was actually accepted (not just a 200 echo with no change).
             resp_excerpt = resp.text[:400] if resp.text else ""
