@@ -8,7 +8,25 @@
 ## [Unreleased]
 สิ่งที่กำลังจะมา / ในใจ:
 - Auto-discovery un-cached values สำหรับ Mimir option learning
-- Google SSO กลับ (ต้องตัดสินใจ deployment ก่อน — Render หรือ subdomain)
+
+---
+
+## 2026-05-16
+### Added
+- **Google SSO gate กลับมา** — login ด้วย Google จำกัด `@thestandard.co` เท่านั้น
+  - `/auth/login` (portal), `/auth/start`, `/auth/callback`, `/auth/logout`, `/auth/me`
+  - Gate ปิดอัตโนมัติถ้าไม่ตั้ง env (ใช้เป็น trusted-LAN ได้)
+  - Domain `thestandard.co` hard-coded ในโค้ด — env แก้ไม่ได้ (กัน typo ทำให้หลุด)
+  - Audit log ทุก login/logout/denied
+  - Session cookie 14 วัน
+- **Caddy + Let's Encrypt** — HTTPS cert จริงสำหรับ `mimir-tool.thestandard.co`
+  - Ports 80+443, auto HTTP-01 challenge
+  - mimir-tool ไม่ expose port ภายนอก — เข้าผ่าน Caddy เท่านั้น
+
+### IT requirements (ต้องทำก่อน deploy)
+- DNS A record: `mimir-tool.thestandard.co` → office public IP
+- FortiGate port-forward: external 80+443 → 192.168.21.220
+- Register `https://mimir-tool.thestandard.co/auth/callback` ใน Google OAuth client
 
 ---
 
