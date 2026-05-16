@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     FREE_TIER_TPD: int = 1_000_000  # tokens per day
     FREE_TIER_WARN_PCT: float = 0.9 # stop at 90% of any limit
 
+    # ── Google SSO gate (optional) ────────────────────────────────────────────
+    # Leave any of these empty → gate is OFF, app is open (trusted-LAN mode).
+    # Set all four → every page requires a Google login with an @thestandard.co
+    # account. Create the OAuth client at console.cloud.google.com → Credentials
+    # → Web application, and register GOOGLE_AUTH_REDIRECT_URI exactly.
+    GOOGLE_AUTH_CLIENT_ID: str = ""
+    GOOGLE_AUTH_CLIENT_SECRET: str = ""
+    GOOGLE_AUTH_REDIRECT_URI: str = ""   # e.g. https://mimir-tool.thestandard.co/auth/callback
+    SESSION_SECRET_KEY: str = ""         # random 32+ chars; required when SSO is on
+
     class Config:
         env_file = ".env"
         extra = "ignore"  # ignore unrelated env vars (APP_PORT, POSTGRES_*, …)

@@ -53,8 +53,11 @@ class BulkReanalyzeRequest(BaseModel):
     context_urls: List[str] = []
     context_text: str = ""
 
+import secrets as _py_secrets
+
 from app.audit import log as audit_log
 from app.config import settings
+from app.services import google_auth as _google_auth
 from app.controllers.gemini_controller import run_gemini_batch, _analyze_one as _gemini_analyze
 from app.controllers.mimir_controller import discover_hires_folders, extract_folder_id, fetch_all_items, push_metadata_to_mimir, _auth_header
 from app.controllers._shared import cache_stats, clear_image_cache, extract_event_from_path, extract_path_context
@@ -177,11 +180,86 @@ async def healthz():
     return {"ok": True}
 
 
-# Anonymous auth probe — the dashboard polls this on load. Always returns
-# the same shape so the JS doesn't need to special-case "no SSO" deploys.
+# ── Google SSO gate ───────────────────────────────────────────────────────────
+
+@router.get("/auth/login", response_class=HTMLResponse)
+async def auth_login(request: Request, error: str = ""):
+    """Login portal — single 'Sign in with Google' button."""
+    if not _google_auth.is_configured():
+        return HTMLResponse(
+            "<h1>SSO not configured</h1><p>Set GOOGLE_AUTH_CLIENT_ID / "
+            "GOOGLE_AUTH_CLIENT_SECRET / GOOGLE_AUTH_REDIRECT_URI / "
+            "SESSION_SECRET_KEY to enable login.</p>", status_code=500)
+    return templates.TemplateResponse("login.html", {
+        "request": request, "root_path": "", "error": error,
+    })
+
+
+@router.get("/auth/start")
+async def auth_start(request: Request):
+    """Kick off the OAuth redirect to Google."""
+    if not _google_auth.is_configured():
+        raise HTTPException(status_code=500, detail="SSO not configured")
+    state = _py_secrets.token_urlsafe(24)
+    request.session["oauth_state"] = state
+    return RedirectResponse(_google_auth.make_authorize_url(state))
+
+
+@router.get("/auth/callback", response_class=HTMLResponse)
+async def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    """OAuth callback — verify state, exchange code, enforce @thestandard.co."""
+    if error:
+        return RedirectResponse(url=f"/auth/login?error={urllib.parse.quote(error)}")
+    expected = request.session.pop("oauth_state", None)
+    if not code or not state or state != expected:
+        return RedirectResponse(url="/auth/login?error=" +
+                                urllib.parse.quote("Session expired — try again"))
+    try:
+        info = await _google_auth.exchange_code_for_user(code)
+    except Exception as e:
+        logger.warning(f"Google token exchange failed: {e}")
+        return RedirectResponse(url="/auth/login?error=" +
+                                urllib.parse.quote("Google sign-in failed"))
+    email = (info.get("email") or "").lower()
+    if not info.get("email_verified", False):
+        audit_log("login", target=email or "unknown", status="error",
+                  message="Email not verified by Google")
+        return RedirectResponse(url="/auth/login?error=" +
+                                urllib.parse.quote("Email not verified"))
+    if not _google_auth.email_allowed(email):
+        audit_log("login", target=email or "unknown", status="error",
+                  message=f"Denied — not an @{_google_auth.ALLOWED_DOMAIN} account")
+        return RedirectResponse(url="/auth/login?error=" + urllib.parse.quote(
+            f"{email} ไม่ใช่บัญชี @{_google_auth.ALLOWED_DOMAIN}"))
+    request.session["user"] = {
+        "email":   email,
+        "name":    info.get("name", ""),
+        "picture": info.get("picture", ""),
+    }
+    audit_log("login", target=email, status="ok", message="Signed in via Google")
+    return RedirectResponse(url="/")
+
+
+@router.post("/auth/logout")
+async def auth_logout(request: Request):
+    user = request.session.get("user") or {}
+    request.session.pop("user", None)
+    if user.get("email"):
+        audit_log("logout", target=user["email"], message="Signed out")
+    return {"ok": True}
+
+
 @router.get("/auth/me")
-async def auth_me():
-    return {"authenticated": False, "configured": False}
+async def auth_me(request: Request):
+    """Auth state for the dashboard. Safe whether SSO is on or off."""
+    configured = _google_auth.is_configured()
+    try:
+        user = request.session.get("user")
+    except (AssertionError, AttributeError):
+        user = None
+    if user and user.get("email"):
+        return {"authenticated": True, "configured": configured, **user}
+    return {"authenticated": False, "configured": configured}
 
 
 # ── API: Token usage & cost ────────────────────────────────────────────────────

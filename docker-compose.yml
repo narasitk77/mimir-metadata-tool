@@ -1,7 +1,13 @@
 # Production / Portainer Stack (Web Editor)
-# Pulls pre-built image from GHCR — Postgres for persistent storage
-# LAN-test mode: plain HTTP on port 8765, no reverse proxy, no Google SSO required.
-# Re-introduce Caddy + SSO when going public on a real subdomain.
+# Pulls the pre-built image from GHCR. Postgres for persistent storage.
+# Caddy terminates HTTPS with a real Let's Encrypt cert for the public
+# subdomain — required for Google SSO callbacks.
+#
+# IT prerequisites for this stack:
+#   1. DNS A record:  mimir-tool.thestandard.co  →  <office public IP>
+#   2. FortiGate port-forward:  external 80 + 443  →  192.168.21.220  (Caddy)
+# Without 80/443 reachable from the internet Let's Encrypt's HTTP-01
+# challenge fails and Caddy can't issue the cert.
 services:
   postgres:
     image: postgres:16-alpine
@@ -23,8 +29,8 @@ services:
     image: ghcr.io/narasitk77/mimir-metadata-tool:latest
     pull_policy: always
     container_name: mimir-metadata-tool
-    ports:
-      - "${APP_PORT:-8765}:8000"
+    expose:
+      - "8000"        # internal only — Caddy is the public face
     volumes:
       - mimir_data:/app/data
     environment:
@@ -43,8 +49,13 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       # Processing rate
       ITEMS_PER_PAGE: ${ITEMS_PER_PAGE:-100}
-      GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-7000}
+      GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-6000}
       BATCH_SIZE: ${BATCH_SIZE:-20}
+      # Google SSO gate — set all four to require @thestandard.co login
+      GOOGLE_AUTH_CLIENT_ID: ${GOOGLE_AUTH_CLIENT_ID:-}
+      GOOGLE_AUTH_CLIENT_SECRET: ${GOOGLE_AUTH_CLIENT_SECRET:-}
+      GOOGLE_AUTH_REDIRECT_URI: ${GOOGLE_AUTH_REDIRECT_URI:-}
+      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,9 +67,41 @@ services:
       start_period: 30s
       retries: 3
 
+  # ── Caddy: HTTPS reverse proxy with automatic Let's Encrypt ───────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: mimir-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"      # HTTP-01 ACME challenge + HTTP→HTTPS redirect
+      - "443:443"    # HTTPS
+    configs:
+      - source: caddyfile_v3
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy_data:/data        # persists issued certs across restarts
+      - caddy_config:/config
+    depends_on:
+      - mimir-tool
+
+
+configs:
+  caddyfile_v3:
+    content: |
+      ${PUBLIC_HOSTNAME:-mimir-tool.thestandard.co} {
+          encode gzip
+          reverse_proxy mimir-tool:8000 {
+              header_up X-Forwarded-Proto https
+          }
+      }
+
 
 volumes:
   mimir_data:
     driver: local
   postgres_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
     driver: local
