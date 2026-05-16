@@ -24,20 +24,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
   mimir-tool:
     image: ghcr.io/narasitk77/mimir-metadata-tool:latest
     pull_policy: always
     container_name: mimir-metadata-tool
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["pip install itsdangerous && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     expose:
-      - "8000"        # internal only — Caddy is the public face
+      - "8000"
     volumes:
       - mimir_data:/app/data
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-mimir}:${POSTGRES_PASSWORD:-mimir_secret}@postgres:5432/${POSTGRES_DB:-mimir_metadata}
       # Mimir DAM
       MIMIR_BASE_URL: ${MIMIR_BASE_URL:-https://apac.mjoll.no}
-      # Use either a static token (expires ~1h) or Cognito SRP (auto-refresh)
       MIMIR_TOKEN: ${MIMIR_TOKEN:-}
       MIMIR_COGNITO_USER_POOL_ID: ${MIMIR_COGNITO_USER_POOL_ID:-}
       MIMIR_COGNITO_CLIENT_ID: ${MIMIR_COGNITO_CLIENT_ID:-}
@@ -51,7 +51,7 @@ services:
       ITEMS_PER_PAGE: ${ITEMS_PER_PAGE:-100}
       GEMINI_DELAY_MS: ${GEMINI_DELAY_MS:-6000}
       BATCH_SIZE: ${BATCH_SIZE:-20}
-      # Google SSO gate — set all four to require @thestandard.co login
+      # Google SSO gate
       GOOGLE_AUTH_CLIENT_ID: ${GOOGLE_AUTH_CLIENT_ID:-}
       GOOGLE_AUTH_CLIENT_SECRET: ${GOOGLE_AUTH_CLIENT_SECRET:-}
       GOOGLE_AUTH_REDIRECT_URI: ${GOOGLE_AUTH_REDIRECT_URI:-}
@@ -66,25 +66,21 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 3
-
-  # ── Caddy: HTTPS reverse proxy with automatic Let's Encrypt ───────────────
   caddy:
     image: caddy:2-alpine
     container_name: mimir-caddy
     restart: unless-stopped
     ports:
-      - "80:80"      # HTTP-01 ACME challenge + HTTP→HTTPS redirect
-      - "443:443"    # HTTPS
+      - "80:80"
+      - "443:443"
     configs:
       - source: caddyfile_v3
         target: /etc/caddy/Caddyfile
     volumes:
-      - caddy_data:/data        # persists issued certs across restarts
+      - caddy_data:/data
       - caddy_config:/config
     depends_on:
       - mimir-tool
-
-
 configs:
   caddyfile_v3:
     content: |
@@ -94,8 +90,6 @@ configs:
               header_up X-Forwarded-Proto https
           }
       }
-
-
 volumes:
   mimir_data:
     driver: local
