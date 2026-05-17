@@ -7,16 +7,33 @@
 
 ## [Unreleased]
 สิ่งที่กำลังจะมา / ในใจ:
-- Auto-discovery un-cached values สำหรับ Mimir option learning
+- Split `routes.py` (1,700 บรรทัด) เป็น routes/ package — refactor โครงสร้าง
+  ล้วนๆ ทำใน session แยก หลัง deploy stable (เสี่ยงสูง ไม่มี user value)
 
 ---
 
 ## 2026-05-17
+### Added
+- **Navbar แสดงชื่อผู้ใช้ที่ login** + ปุ่ม logout (แทนที่จะแสดง email ดิบ)
+- **Audit Log viewer** — ปุ่ม "Audit Log" บน toolbar เปิด modal ดูประวัติทุก
+  action filter ตาม action/status ได้ — ไม่ต้อง curl `/api/audit-log` เอง
+- **Health dashboard** — ปุ่ม "Health" เช็คสถานะ Mimir API / Gemini quota /
+  Database พร้อม latency + progress bar quota + จุดสีเขียว/แดงบน navbar
+  - `GET /api/health` endpoint ใหม่
+- **Mimir option auto-discovery** — cache เรียนรู้ค่าใหม่ที่ Mimir รับเองได้
+  - `MimirOption.status` (ok/bad) — จำค่าที่ Mimir ปฏิเสธ ไม่ลองซ้ำ
+  - retry loop ระดับ value (drop ทีละค่า ไม่ทิ้งทั้ง field)
+  - ค่าที่ยังไม่รู้จัก = discovery candidate ได้ลอง 1 ครั้ง
+- **Gemini prompt** ใส่ vocabulary ที่ Mimir รับ (จาก cache) — AI ตอบตรง slug
+
 ### Fixed
+- `editorial_categories` เป็น **single-value** (Mimir ไม่รับ array) — เปลี่ยน
+  transformer จาก `_split_lower_list` → `_first_lower` แก้ 400 error ที่เจอทุก push
+
+### Changed
 - `itsdangerous` + `starlette[full]` กลับเข้า `requirements.txt` — SSO commit
   เพิ่ม `SessionMiddleware` แต่ `itsdangerous` ถูก prune ไปก่อนหน้า → image
   เก่า crash ตอน startup (แก้โดย IT: `0b8977e`)
-### Changed
 - ลบ docker-compose hotfix (`pip install itsdangerous` ตอน container start)
   ออก — image `0b8977e` มี package แล้ว ปล่อยให้ Dockerfile CMD เดิมทำงาน
   (ได้ `--proxy-headers` กลับมา — trust X-Forwarded-Proto จาก Caddy)
