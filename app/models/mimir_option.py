@@ -26,6 +26,9 @@ class MimirOption(Base):
     id           = Column(Integer, primary_key=True, autoincrement=True)
     field_uuid   = Column(String(64),  index=True, nullable=False)
     option_value = Column(String(256), index=True, nullable=False)
+    # "ok"  — Mimir accepted this value on a real push
+    # "bad" — Mimir rejected it (400); don't send it again
+    status       = Column(String(8),  default="ok", nullable=False)
     accept_count = Column(Integer, default=1, nullable=False)
     last_seen    = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -34,6 +37,7 @@ class MimirOption(Base):
             "id":           self.id,
             "field_uuid":   self.field_uuid,
             "option_value": self.option_value,
+            "status":       self.status or "ok",
             "accept_count": self.accept_count,
             "last_seen":    self.last_seen.isoformat() if self.last_seen else None,
         }

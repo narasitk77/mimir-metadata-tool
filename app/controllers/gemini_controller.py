@@ -19,6 +19,47 @@ from app.controllers._shared import (
 
 logger = logging.getLogger(__name__)
 
+# Closed-set ("dropdown") fields → Mimir field UUID. When the option cache has
+# learned valid values for one of these, we feed them into the prompt so Gemini
+# picks from the accepted vocabulary instead of inventing values Mimir rejects.
+# Free-text fields (location, keywords, tags, persons) are deliberately excluded.
+_VOCAB_FIELDS = {
+    "category":             "a2c6f3f0-5ecb-44c1-a255-25f3e50bdeda",
+    "editorial_categories": "2f5f0fb9-b4a7-44a1-92b7-a12daaaf625e",
+    "language":             "2c09393f-1c1b-43e4-9778-8d14bc6132b9",
+    "emotion_mood":         "a6711363-9183-4e41-a7e9-cae0ef7889c8",
+    "department":           "766b92be-47e7-49f4-bbe4-2917c4702a8b",
+}
+
+
+def _cached_vocab_hint() -> str:
+    """Build a prompt fragment listing Mimir-accepted values per closed-set
+    field, sourced from the self-learning MimirOption cache. Empty string when
+    nothing has been learned yet (first runs) — the AI then uses its defaults
+    and the option cache learns from whatever Mimir accepts."""
+    try:
+        from app.models.mimir_option import MimirOption
+        db = SessionLocal()
+        try:
+            lines = []
+            for ai_key, uuid in _VOCAB_FIELDS.items():
+                vals = [r.option_value for r in
+                        db.query(MimirOption)
+                          .filter(MimirOption.field_uuid == uuid)
+                          .order_by(MimirOption.accept_count.desc())
+                          .limit(40).all()]
+                if vals:
+                    lines.append(f'- {ai_key}: {", ".join(vals)}')
+            if not lines:
+                return ""
+            return ("\n\n[ค่าที่ Mimir ยอมรับ — เลือกใช้เฉพาะจากรายการนี้ "
+                    "ถ้าเป็นไปได้ ให้ตรงตามตัวสะกด]:\n" + "\n".join(lines))
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug(f"vocab hint skipped: {e}")
+        return ""
+
 
 PROMPT = """\
 You are a media metadata specialist for THE STANDARD, a Thai news and media company.
@@ -373,6 +414,10 @@ async def _analyze_one(client: httpx.AsyncClient, asset: Asset,
     # Free-text hint from user
     if context_text:
         prompt += f"\n\n[หมายเหตุจากผู้ใช้]: {context_text}"
+
+    # Mimir-accepted vocabulary (self-learning) — keeps AI output aligned with
+    # the closed-set dropdowns so pushes don't get rejected.
+    prompt += _cached_vocab_hint()
 
     # 5. Gemini API call
     payload = {

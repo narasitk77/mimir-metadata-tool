@@ -13,12 +13,16 @@ from app.services.cognito_auth import get_token as _get_cognito_token
 
 
 def _filter_through_cache(uuid_fields: dict) -> dict:
-    """Filter list-typed UUID payloads through MimirOption cache.
+    """Filter list-typed UUID payloads through the MimirOption cache.
 
-    For each (uuid_key, list_value) pair, keep only values previously confirmed
-    by Mimir. If the cache has no entries for a field, leave the field untouched
-    (discovery mode — let Mimir teach us). If filtering empties the list, drop
-    the field entirely so Mimir doesn't see []."""
+    Three-way decision per value:
+      - status "bad"  → drop (Mimir rejected it before — don't waste a retry)
+      - status "ok"   → keep (confirmed good)
+      - not in cache  → keep as a DISCOVERY CANDIDATE — give it a chance; the
+                        value-level retry will sort it out and the result is
+                        recorded so we never test the same value twice.
+
+    A field is dropped only if every value resolves to "bad"/empty."""
     filtered: dict = {}
     db = SessionLocal()
     try:
@@ -26,13 +30,9 @@ def _filter_through_cache(uuid_fields: dict) -> dict:
             if not isinstance(v, list) or not v:
                 filtered[k] = v
                 continue
-            known = {row.option_value for row in
-                     db.query(MimirOption).filter(MimirOption.field_uuid == k).all()}
-            if not known:
-                # No cache yet → send full list, let Mimir reject + we'll learn
-                filtered[k] = v
-                continue
-            kept = [item for item in v if str(item) in known]
+            rows = db.query(MimirOption).filter(MimirOption.field_uuid == k).all()
+            bad = {r.option_value for r in rows if (r.status or "ok") == "bad"}
+            kept = [item for item in v if str(item) not in bad]
             if kept:
                 filtered[k] = kept
     except Exception as exc:
@@ -44,15 +44,14 @@ def _filter_through_cache(uuid_fields: dict) -> dict:
 
 
 def _record_accepted(accepted_payload: dict) -> None:
-    """Persist values Mimir just accepted so the next push pre-filters them."""
+    """Mark every value in an accepted payload as status 'ok'."""
     db = SessionLocal()
     try:
         now = datetime.utcnow()
         for k, v in accepted_payload.items():
             if not k or not v:
                 continue
-            values = v if isinstance(v, list) else [v]
-            for item in values:
+            for item in (v if isinstance(v, list) else [v]):
                 s = str(item).strip()
                 if not s:
                     continue
@@ -61,14 +60,41 @@ def _record_accepted(accepted_payload: dict) -> None:
                                  MimirOption.option_value == s)
                          .first())
                 if row:
+                    row.status = "ok"
                     row.accept_count = (row.accept_count or 0) + 1
                     row.last_seen = now
                 else:
-                    db.add(MimirOption(field_uuid=k, option_value=s,
+                    db.add(MimirOption(field_uuid=k, option_value=s, status="ok",
                                        accept_count=1, last_seen=now))
         db.commit()
     except Exception as exc:
-        logger.warning(f"Option cache record failed: {exc}")
+        logger.warning(f"Option cache record (accept) failed: {exc}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _record_rejected(field_uuid: str, value: str) -> None:
+    """Mark one value as status 'bad' so future pushes skip it up-front."""
+    if not field_uuid or not value:
+        return
+    db = SessionLocal()
+    try:
+        s = str(value).strip()
+        row = (db.query(MimirOption)
+                 .filter(MimirOption.field_uuid == field_uuid,
+                         MimirOption.option_value == s)
+                 .first())
+        if row:
+            row.status = "bad"
+            row.last_seen = datetime.utcnow()
+        else:
+            db.add(MimirOption(field_uuid=field_uuid, option_value=s,
+                               status="bad", accept_count=0,
+                               last_seen=datetime.utcnow()))
+        db.commit()
+    except Exception as exc:
+        logger.warning(f"Option cache record (reject) failed: {exc}")
         db.rollback()
     finally:
         db.close()
@@ -110,6 +136,16 @@ def _split_lower_list(v: str) -> list:
     return [x.strip().lower() for x in str(v).split(",") if x.strip()]
 
 
+def _first_lower(v: str) -> str:
+    """First comma-element only, lowercased — for SINGLE-value dropdowns.
+    Mimir's editorial_categories rejects a multi-value array (it joins the
+    array and looks for one option matching the whole 'a,b' string). The
+    option cache only ever recorded single values as accepted, confirming
+    the field takes exactly one value."""
+    parts = [x.strip().lower() for x in str(v).split(",") if x.strip()]
+    return parts[0] if parts else ""
+
+
 def _photographer_slugs(v: str) -> list:
     """Convert 'First Last' → ['first_last'] (Mimir photographer field stores slug in an array)."""
     s = _slug(v)
@@ -147,7 +183,7 @@ _MIMIR_UUID_FIELDS: dict[str, tuple] = {
     # db_field                  (uuid_key,                               value_transformer)
     "ai_category":              ("a2c6f3f0-5ecb-44c1-a255-25f3e50bdeda", str.lower),           # "photo"
     # ai_subcat — Sub-category UUID not yet identified; still pushed via default_subCategory
-    "ai_editorial_categories":  ("2f5f0fb9-b4a7-44a1-92b7-a12daaaf625e", _split_lower_list),   # ["politics","hum_inter"]
+    "ai_editorial_categories":  ("2f5f0fb9-b4a7-44a1-92b7-a12daaaf625e", _first_lower),         # single value e.g. "lifestyle"
     "ai_language":              ("2c09393f-1c1b-43e4-9778-8d14bc6132b9", str.lower),            # "thai","english"
     "ai_emotion_mood":          ("a6711363-9183-4e41-a7e9-cae0ef7889c8", _split_lower_list),    # ["neutral"],["happy"]
     "ai_location":              ("0d0222be-8d47-45c0-add8-f3de9ca9f682", str),                  # free text
@@ -447,11 +483,13 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
             # bypass the filter (cache is empty → discovery mode).
             uuid_fields = _filter_through_cache(uuid_fields)
 
-            # ── Smart retry loop ───────────────────────────────────────────────
-            # Mimir returns 400 when a UUID field value isn't a valid option.
-            # Parse the error to find which value was rejected, drop that UUID
-            # field, and retry — until all remaining UUID fields are accepted.
-            # Pattern: {"error":{"message":"Trying to set invalid value X for field: \"Y\""}}
+            # ── Smart retry loop — value-level ─────────────────────────────────
+            # Mimir returns 400 with: invalid value X for field: "Y".
+            # We drop X (one value, not the whole field), record it as rejected
+            # in the option cache, and retry. List fields keep their other
+            # values; only when a field is emptied is it skipped entirely.
+            # This is the auto-discovery mechanism: un-cached values get tried
+            # once, and the ok/bad verdict is remembered forever.
             _invalid_pat = _re.compile(r'invalid value (.+?) for field', _re.IGNORECASE)
             headers = {
                 **(await _auth_header()),
@@ -461,12 +499,11 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
             skipped_uuid: list[str] = []
             resp = None
 
-            # Also capture the field name from the error so we can drop the right one
-            # even when bad_val is the comma-joined form of a list payload.
-            _invalid_field_pat = _re.compile(r'for field:\s*[\'"]?([^\'"]+?)[\'"]?\s*$',
-                                             _re.IGNORECASE | _re.MULTILINE)
+            # Worst case = one retry per individual value, plus slack.
+            max_attempts = sum(len(v) if isinstance(v, list) else 1
+                               for v in uuid_fields.values()) + 2
 
-            for _attempt in range(len(uuid_fields) + 1):   # max n+1 attempts
+            for _attempt in range(max(max_attempts, 1)):
                 formdata = {
                     **current_uuid,
                     **required,
@@ -479,60 +516,63 @@ async def push_metadata_to_mimir(item_id: str) -> dict:
                 )
                 if resp.status_code == 200:
                     break
-                if resp.status_code == 400 and current_uuid:
-                    m = _invalid_pat.search(resp.text)
-                    field_m = _invalid_field_pat.search(resp.text)
-                    bad_val = m.group(1) if m else ""
-                    bad_field = field_m.group(1).strip() if field_m else ""
-                    removed = False
-                    # Match against every shape the field value might take:
-                    #   - "business" (single string)
-                    #   - ["business","lifestyle"] (multi-value list → Mimir
-                    #     echoes the joined "business,lifestyle" in its error)
-                    for k in list(current_uuid.keys()):
-                        v = current_uuid[k]
-                        candidates = []
-                        if isinstance(v, str):
-                            candidates.append(v)
-                        elif isinstance(v, list):
-                            candidates.append(",".join(str(x) for x in v))
-                            if v:
-                                candidates.append(str(v[0]))
+                if resp.status_code != 400 or not current_uuid:
+                    break
+
+                m = _invalid_pat.search(resp.text)
+                bad_val = m.group(1).strip() if m else ""
+                removed = False
+
+                for k in list(current_uuid.keys()):
+                    v = current_uuid[k]
+                    if isinstance(v, list):
+                        joined = ",".join(str(x) for x in v)
+                        elems  = [str(x) for x in v]
+                        if bad_val and bad_val in elems:
+                            # Mimir named one bad element — drop just it.
+                            v_new = [x for x in v if str(x) != bad_val]
+                            _record_rejected(k, bad_val)
+                        elif bad_val and bad_val == joined:
+                            # Whole-list rejected, Mimir won't say which element.
+                            # Drop the LAST (most likely the discovery candidate),
+                            # record it bad, retry with the rest.
+                            _record_rejected(k, elems[-1])
+                            v_new = v[:-1]
                         else:
-                            candidates.append(str(v))
-                        if bad_val and bad_val in candidates:
-                            skipped_uuid.append(k)
+                            continue   # this field isn't the culprit
+                        if v_new:
+                            current_uuid[k] = v_new
+                        else:
                             del current_uuid[k]
-                            logger.warning(f"UUID field {k[:8]} ({bad_field or '?'}) skipped — invalid value '{bad_val}'")
+                            skipped_uuid.append(k)
+                        logger.warning(f"UUID field {k[:8]} — dropped value '{bad_val or elems[-1]}'")
+                        removed = True
+                        break
+                    else:  # single string value
+                        if bad_val and str(v) == bad_val:
+                            _record_rejected(k, str(v))
+                            del current_uuid[k]
+                            skipped_uuid.append(k)
+                            logger.warning(f"UUID field {k[:8]} skipped — invalid value '{bad_val}'")
                             removed = True
                             break
-                    if not removed and bad_field:
-                        # Mimir told us the field name explicitly but value
-                        # match failed — drop the field whose db column name
-                        # contains that field name fragment (best effort).
-                        for k in list(current_uuid.keys()):
-                            # k is a UUID — we don't have a name map back to it
-                            # easily. Skip; let the next branch clear everything.
-                            pass
-                    if not removed:
-                        # Last-resort fallback: drop the field whose value gets
-                        # mentioned in the response body, even partially.
-                        for k in list(current_uuid.keys()):
-                            v = current_uuid[k]
-                            v_str = ",".join(str(x) for x in v) if isinstance(v, list) else str(v)
-                            if v_str and v_str in resp.text:
-                                skipped_uuid.append(k)
-                                del current_uuid[k]
-                                logger.warning(f"UUID field {k[:8]} skipped via fallback — value '{v_str}' found in error body")
-                                removed = True
-                                break
-                    if not removed:
-                        # Truly unparseable — drop all UUID fields as last resort
-                        skipped_uuid.extend(current_uuid.keys())
-                        current_uuid = {}
-                        logger.warning(f"Cleared all UUID fields after unparseable 400: {resp.text[:200]}")
-                else:
-                    break  # non-400 or no UUID fields left
+
+                if not removed:
+                    # Fallback: substring-match the response body.
+                    for k in list(current_uuid.keys()):
+                        v = current_uuid[k]
+                        v_str = ",".join(str(x) for x in v) if isinstance(v, list) else str(v)
+                        if v_str and v_str in resp.text:
+                            del current_uuid[k]
+                            skipped_uuid.append(k)
+                            logger.warning(f"UUID field {k[:8]} skipped via fallback")
+                            removed = True
+                            break
+                if not removed:
+                    # Truly unparseable — drop all UUID fields, last resort.
+                    skipped_uuid.extend(current_uuid.keys())
+                    current_uuid = {}
+                    logger.warning(f"Cleared all UUID fields after unparseable 400: {resp.text[:200]}")
 
         if resp and resp.status_code == 200:
             sent = list(current_uuid.keys())

@@ -73,3 +73,9 @@ def run_migrations():
                 conn.commit()
             except Exception:
                 pass  # column already exists
+        # mimir_options.status — added 2026-05-17 for option auto-discovery
+        try:
+            conn.execute(text("ALTER TABLE mimir_options ADD COLUMN status VARCHAR(8) DEFAULT 'ok'"))
+            conn.commit()
+        except Exception:
+            pass  # column already exists, or table not created yet (create_all handles new installs)
