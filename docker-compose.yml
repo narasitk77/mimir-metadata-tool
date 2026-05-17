@@ -28,8 +28,10 @@ services:
     image: ghcr.io/narasitk77/mimir-metadata-tool:latest
     pull_policy: always
     container_name: mimir-metadata-tool
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["pip install itsdangerous && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    # No entrypoint/command override — the image's Dockerfile CMD already runs
+    # uvicorn with --proxy-headers (needed so X-Forwarded-Proto from Caddy is
+    # trusted). The `pip install itsdangerous` hotfix is no longer needed:
+    # itsdangerous is in requirements.txt as of 0b8977e and baked into the image.
     expose:
       - "8000"
     volumes:

@@ -11,6 +11,18 @@
 
 ---
 
+## 2026-05-17
+### Fixed
+- `itsdangerous` + `starlette[full]` กลับเข้า `requirements.txt` — SSO commit
+  เพิ่ม `SessionMiddleware` แต่ `itsdangerous` ถูก prune ไปก่อนหน้า → image
+  เก่า crash ตอน startup (แก้โดย IT: `0b8977e`)
+### Changed
+- ลบ docker-compose hotfix (`pip install itsdangerous` ตอน container start)
+  ออก — image `0b8977e` มี package แล้ว ปล่อยให้ Dockerfile CMD เดิมทำงาน
+  (ได้ `--proxy-headers` กลับมา — trust X-Forwarded-Proto จาก Caddy)
+
+---
+
 ## 2026-05-16
 ### Added
 - **Google SSO gate กลับมา** — login ด้วย Google จำกัด `@thestandard.co` เท่านั้น
