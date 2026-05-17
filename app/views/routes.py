@@ -1097,6 +1097,72 @@ class BatchStartRequest(BaseModel):
     force: bool = False
 
 
+@router.get("/api/health")
+async def health_detail(db: Session = Depends(get_db)):
+    """Detailed health check — Mimir API, Gemini quota, database. Each component
+    reports {ok, latency_ms, detail}. Used by the dashboard's health panel."""
+    import time as _t
+    from app.controllers.gemini_controller import get_daily_usage
+
+    components: dict = {}
+
+    # ── Database ──────────────────────────────────────────────────────────
+    t0 = _t.perf_counter()
+    try:
+        total = db.query(Asset).count()
+        components["database"] = {
+            "ok": True,
+            "latency_ms": round((_t.perf_counter() - t0) * 1000, 1),
+            "detail": f"{total} assets",
+        }
+    except Exception as e:
+        components["database"] = {"ok": False, "latency_ms": None, "detail": str(e)[:200]}
+
+    # ── Mimir API ─────────────────────────────────────────────────────────
+    t0 = _t.perf_counter()
+    try:
+        headers = await _auth_header()
+        async with httpx.AsyncClient(timeout=12) as client:
+            r = await client.get(
+                f"{settings.MIMIR_BASE_URL}/api/v1/search",
+                params={"searchString": "*", "itemsPerPage": 1, "from": 0},
+                headers=headers,
+            )
+        components["mimir"] = {
+            "ok": r.status_code == 200,
+            "latency_ms": round((_t.perf_counter() - t0) * 1000, 1),
+            "detail": f"HTTP {r.status_code}" + ("" if r.status_code == 200 else f" — {r.text[:120]}"),
+        }
+    except Exception as e:
+        components["mimir"] = {"ok": False, "latency_ms": None, "detail": str(e)[:200]}
+
+    # ── Gemini quota ──────────────────────────────────────────────────────
+    usage = get_daily_usage()
+    rpd, tpd = settings.FREE_TIER_RPD, settings.FREE_TIER_TPD
+    rpd_pct = round(usage["requests"] / rpd * 100, 1) if rpd else 0
+    tpd_pct = round(usage["tokens"]   / tpd * 100, 1) if tpd else 0
+    warn = settings.FREE_TIER_WARN_PCT * 100
+    components["gemini"] = {
+        "ok": bool(settings.GEMINI_API_KEY) and rpd_pct < warn and tpd_pct < warn,
+        "latency_ms": None,
+        "detail": (f"key set · {usage['requests']}/{rpd} req ({rpd_pct}%) · "
+                   f"{usage['tokens']:,}/{tpd:,} tok ({tpd_pct}%)")
+                  if settings.GEMINI_API_KEY else "GEMINI_API_KEY not set",
+        "model": settings.GEMINI_MODEL,
+        "rpd_pct": rpd_pct,
+        "tpd_pct": tpd_pct,
+    }
+
+    all_ok = all(c["ok"] for c in components.values())
+    return {
+        "ok": all_ok,
+        "components": components,
+        "batch_running": _running["batch"],
+        "fetch_running": _running["fetch"],
+        "checked_at": datetime.utcnow().isoformat(),
+    }
+
+
 @router.get("/api/diag")
 async def diagnostics(db: Session = Depends(get_db)):
     """Diagnostic endpoint — surface common batch-failure causes."""

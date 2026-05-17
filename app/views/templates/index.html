@@ -522,6 +522,9 @@
         <button class="btn btn-outline-secondary btn-sm" onclick="openAuditLog()" title="ประวัติการทำงานทุก action ในระบบ">
           <i class="bi bi-clipboard-check me-1"></i>Audit Log
         </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="openHealth()" title="สถานะระบบ — Mimir / Gemini / Database">
+          <i class="bi bi-heart-pulse me-1"></i><span id="health-dot" style="display:none">●</span> Health
+        </button>
         <button class="btn btn-outline-secondary btn-sm" id="btn-backfill" onclick="backfillProxy()" title="Fetch proxy image URLs for assets that don't have one yet">
           <i class="bi bi-images me-1"></i>Backfill Proxy
         </button>
@@ -3041,7 +3044,93 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
   </div>
 </div>
 
+<!-- ── Health Modal ─────────────────────────────────────────────────────── -->
+<div class="modal fade" id="healthModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-heart-pulse me-2"></i>สถานะระบบ</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="health-body" class="small">
+          <div class="text-center text-secondary py-4">
+            <span class="spinner-border spinner-border-sm me-2"></span>กำลังตรวจสอบ…
+          </div>
+        </div>
+        <button class="btn btn-outline-secondary btn-sm w-100 mt-2" onclick="loadHealth()">
+          <i class="bi bi-arrow-clockwise me-1"></i>ตรวจสอบใหม่
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
+  // ── Health dashboard ─────────────────────────────────────────────────────────
+  function openHealth() {
+    new bootstrap.Modal(document.getElementById('healthModal')).show();
+    loadHealth();
+  }
+  async function loadHealth() {
+    const body = document.getElementById('health-body');
+    body.innerHTML = '<div class="text-center text-secondary py-4">'
+      + '<span class="spinner-border spinner-border-sm me-2"></span>กำลังตรวจสอบ…</div>';
+    try {
+      const r = await fetch(_ROOT + '/api/health');
+      const d = await r.json();
+      const row = (icon, name, c) => {
+        const dot = c.ok ? '#5cb85c' : '#e0726e';
+        const lat = c.latency_ms != null ? `<span style="color:#666">${c.latency_ms} ms</span>` : '';
+        return `<div class="d-flex align-items-center gap-2 py-2 border-bottom border-secondary">
+          <span style="color:${dot};font-size:1.1rem">●</span>
+          <i class="bi ${icon}" style="color:#888;width:18px"></i>
+          <strong style="width:90px">${name}</strong>
+          <span class="text-secondary flex-grow-1">${esc(c.detail || '')}</span>
+          ${lat}
+        </div>`;
+      };
+      const c = d.components;
+      let html = '';
+      html += row('bi-hdd-stack', 'Database', c.database);
+      html += row('bi-cloud',      'Mimir API', c.mimir);
+      html += row('bi-cpu',        'Gemini',    c.gemini);
+      // Gemini quota bars
+      if (c.gemini && (c.gemini.rpd_pct != null)) {
+        const bar = (label, pct) => {
+          const col = pct >= 90 ? '#e0726e' : pct >= 70 ? '#e0a96e' : '#5cb85c';
+          return `<div class="mt-1" style="font-size:.72rem">
+            <div class="d-flex justify-content-between text-secondary"><span>${label}</span><span>${pct}%</span></div>
+            <div style="background:#2a2a2a;border-radius:3px;height:5px;overflow:hidden">
+              <div style="background:${col};height:100%;width:${Math.min(pct,100)}%"></div>
+            </div></div>`;
+        };
+        html += `<div class="ps-4 pb-2">${bar('Requests/day', c.gemini.rpd_pct)}${bar('Tokens/day', c.gemini.tpd_pct)}</div>`;
+      }
+      html += `<div class="d-flex gap-3 mt-2 text-secondary" style="font-size:.72rem">
+        <span>Batch: ${d.batch_running ? '<span style="color:#e0a96e">running</span>' : 'idle'}</span>
+        <span>Fetch: ${d.fetch_running ? '<span style="color:#e0a96e">running</span>' : 'idle'}</span>
+        <span class="ms-auto">ตรวจเมื่อ ${new Date(d.checked_at + 'Z').toLocaleTimeString('th-TH')}</span>
+      </div>`;
+      const overall = d.ok
+        ? '<div class="text-center mt-2" style="color:#5cb85c"><i class="bi bi-check-circle me-1"></i>ระบบปกติ</div>'
+        : '<div class="text-center mt-2" style="color:#e0726e"><i class="bi bi-exclamation-triangle me-1"></i>มีบางส่วนผิดปกติ</div>';
+      body.innerHTML = html + overall;
+      // navbar dot
+      const dot = document.getElementById('health-dot');
+      dot.style.display = 'inline'; dot.style.color = d.ok ? '#5cb85c' : '#e0726e';
+    } catch(e) {
+      body.innerHTML = `<div class="text-center py-3" style="color:#e0726e">โหลดไม่สำเร็จ: ${esc(e.message)}</div>`;
+    }
+  }
+  // Passive health check on load — lights the navbar dot.
+  document.addEventListener('DOMContentLoaded', () => {
+    fetch(_ROOT + '/api/health').then(r => r.json()).then(d => {
+      const dot = document.getElementById('health-dot');
+      if (dot) { dot.style.display = 'inline'; dot.style.color = d.ok ? '#5cb85c' : '#e0726e'; }
+    }).catch(() => {});
+  });
+
   // ── Audit Log ──────────────────────────────────────────────────────────────
   function openAuditLog() {
     new bootstrap.Modal(document.getElementById('auditModal')).show();
