@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
+from app import audit as _audit
 from app.config import settings
 from app.database import Base, engine, run_migrations
 from app.models.person import Person  # noqa: F401 — register with Base
@@ -62,11 +63,21 @@ _PUBLIC_PREFIXES = ("/static/", "/favicon")
 
 class AuthGateMiddleware(BaseHTTPMiddleware):
     """Require a Google session for everything except the public paths.
-    No-op when SSO is not configured."""
+    No-op when SSO is not configured.
+
+    Also records the logged-in user into the audit context so audit.log()
+    can stamp every action with who performed it."""
     async def dispatch(self, request: Request, call_next):
         if not _google_auth.is_configured():
             return await call_next(request)
         path = request.url.path
+        # Stamp the audit context with the current user (if any) for every
+        # request — even public ones — so actions are attributed correctly.
+        try:
+            sess_user = request.session.get("user") or {}
+            _audit.set_current_user(sess_user.get("email", ""))
+        except Exception:
+            pass
         if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
         user = request.session.get("user")

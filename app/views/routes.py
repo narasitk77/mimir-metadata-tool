@@ -55,7 +55,7 @@ class BulkReanalyzeRequest(BaseModel):
 
 import secrets as _py_secrets
 
-from app.audit import log as audit_log
+from app.audit import log as audit_log, get_current_user
 from app.config import settings
 from app.services import google_auth as _google_auth
 from app.controllers.gemini_controller import run_gemini_batch, _analyze_one as _gemini_analyze
@@ -223,12 +223,13 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     email = (info.get("email") or "").lower()
     if not info.get("email_verified", False):
         audit_log("login", target=email or "unknown", status="error",
-                  message="Email not verified by Google")
+                  message="Email not verified by Google", user=email or "unknown")
         return RedirectResponse(url="/auth/login?error=" +
                                 urllib.parse.quote("Email not verified"))
     if not _google_auth.email_allowed(email):
         audit_log("login", target=email or "unknown", status="error",
-                  message=f"Denied — not an @{_google_auth.ALLOWED_DOMAIN} account")
+                  message=f"Denied — not an @{_google_auth.ALLOWED_DOMAIN} account",
+                  user=email or "unknown")
         return RedirectResponse(url="/auth/login?error=" + urllib.parse.quote(
             f"{email} ไม่ใช่บัญชี @{_google_auth.ALLOWED_DOMAIN}"))
     request.session["user"] = {
@@ -236,7 +237,7 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
         "name":    info.get("name", ""),
         "picture": info.get("picture", ""),
     }
-    audit_log("login", target=email, status="ok", message="Signed in via Google")
+    audit_log("login", target=email, status="ok", message="Signed in via Google", user=email)
     return RedirectResponse(url="/")
 
 
@@ -245,7 +246,7 @@ async def auth_logout(request: Request):
     user = request.session.get("user") or {}
     request.session.pop("user", None)
     if user.get("email"):
-        audit_log("logout", target=user["email"], message="Signed out")
+        audit_log("logout", target=user["email"], message="Signed out", user=user["email"])
     return {"ok": True}
 
 
@@ -1571,6 +1572,108 @@ async def list_audit_log(
     }
 
 
+def _audit_query(db: Session, action: str = "", status: str = "",
+                 target: str = "", user: str = ""):
+    """Shared filter builder for audit-log read endpoints."""
+    q = db.query(AuditLog)
+    if action:
+        q = q.filter(AuditLog.action == action)
+    if status:
+        q = q.filter(AuditLog.status == status)
+    if target:
+        q = q.filter(AuditLog.target.contains(target))
+    if user:
+        q = q.filter(AuditLog.user.contains(user))
+    return q
+
+
+@router.get("/api/audit-log/export.csv")
+async def export_audit_log_csv(
+    action: str = "",
+    status: str = "",
+    target: str = "",
+    user: str = "",
+    limit: int = 10000,
+    db: Session = Depends(get_db),
+):
+    """Export the audit log as CSV — work history of every user, newest first.
+    Honours the same filters as /api/audit-log. Opens cleanly in Excel/Sheets."""
+    import csv, io
+    from fastapi.responses import StreamingResponse as _SR
+
+    rows = (_audit_query(db, action, status, target, user)
+            .order_by(AuditLog.id.desc())
+            .limit(min(max(limit, 1), 100000))
+            .all())
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Timestamp (UTC)", "User", "Action", "Target", "Status", "Message"])
+    for r in rows:
+        w.writerow([
+            r.timestamp.strftime("%Y-%m-%d %H:%M:%S") if r.timestamp else "",
+            r.user or "",
+            r.action or "",
+            r.target or "",
+            r.status or "",
+            (r.message or "").replace("\n", " ").replace("\r", " "),
+        ])
+
+    buf.seek(0)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return _SR(
+        iter([buf.getvalue().encode("utf-8-sig")]),  # utf-8-sig = BOM for Excel/Sheets
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=audit_log_{ts}.csv"},
+    )
+
+
+@router.get("/api/audit-log/users")
+async def audit_log_user_summary(db: Session = Depends(get_db)):
+    """Per-user usage summary — how many actions each user performed, broken
+    down by action type, with first/last activity timestamps."""
+    from sqlalchemy import func, case as _case
+
+    rows = (db.query(
+                AuditLog.user,
+                AuditLog.action,
+                func.count(AuditLog.id).label("n"),
+                func.sum(_case((AuditLog.status == "error", 1), else_=0)).label("errors"),
+                func.min(AuditLog.timestamp).label("first_at"),
+                func.max(AuditLog.timestamp).label("last_at"),
+            )
+            .group_by(AuditLog.user, AuditLog.action)
+            .all())
+
+    users: dict = {}
+    for user, action, n, errors, first_at, last_at in rows:
+        key = user or "(unknown)"
+        u = users.setdefault(key, {
+            "user": key, "total": 0, "errors": 0,
+            "by_action": {}, "first_at": None, "last_at": None,
+        })
+        u["total"]  += n or 0
+        u["errors"] += int(errors or 0)
+        u["by_action"][action] = u["by_action"].get(action, 0) + (n or 0)
+        if first_at and (u["first_at"] is None or first_at < u["first_at"]):
+            u["first_at"] = first_at
+        if last_at and (u["last_at"] is None or last_at > u["last_at"]):
+            u["last_at"] = last_at
+
+    items = []
+    for u in users.values():
+        items.append({
+            "user":      u["user"],
+            "total":     u["total"],
+            "errors":    u["errors"],
+            "by_action": u["by_action"],
+            "first_at":  u["first_at"].isoformat() if u["first_at"] else None,
+            "last_at":   u["last_at"].isoformat()  if u["last_at"]  else None,
+        })
+    items.sort(key=lambda x: x["total"], reverse=True)
+    return {"users": items, "user_count": len(items)}
+
+
 @router.post("/api/assets/{item_id}/push")
 async def push_one(item_id: str):
     result = await push_metadata_to_mimir(item_id)
@@ -1598,8 +1701,11 @@ async def push_all(db: Session = Depends(get_db)):
     """Push all 'done' assets to Mimir with bounded concurrency + audit log."""
     done_ids = [a.item_id for a in db.query(Asset).filter(Asset.status == "done").all()]
     total = len(done_ids)
+    # Capture the user now — the streaming generator below runs the per-asset
+    # audit calls in a context where reading the request session is unreliable.
+    who = get_current_user()
     audit_log("push_all_start", target="all", message=f"Push {total} done assets",
-              details={"count": total})
+              details={"count": total}, user=who)
 
     sem = asyncio.Semaphore(_PUSH_PARALLEL)
     queue: asyncio.Queue = asyncio.Queue()
@@ -1620,13 +1726,15 @@ async def push_all(db: Session = Depends(get_db)):
                           details={"uuid_fields_sent": result.get("uuid_fields_sent", []),
                                    "uuid_fields_skipped": result.get("uuid_fields_skipped", []),
                                    "fields_pushed": result.get("fields_pushed", []),
-                                   "response_excerpt": result.get("response_excerpt", "")})
+                                   "response_excerpt": result.get("response_excerpt", "")},
+                          user=who)
             else:
                 errors += 1
                 audit_log("push", target=item_id, status="error",
                           message=str(result.get("error", "unknown"))[:500],
                           details={"status_code": result.get("status_code"),
-                                   "response_excerpt": result.get("response_excerpt", "")})
+                                   "response_excerpt": result.get("response_excerpt", "")},
+                          user=who)
             await queue.put({
                 "item_id": item_id,
                 "ok": result.get("ok", False),
@@ -1653,7 +1761,8 @@ async def push_all(db: Session = Depends(get_db)):
             audit_log("push_all_done", target="all",
                       status="ok" if errors == 0 else "error",
                       message=f"Push {total} done assets → {ok_count} ok, {errors} error",
-                      details={"ok": ok_count, "errors": errors, "total": total})
+                      details={"ok": ok_count, "errors": errors, "total": total},
+                      user=who)
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

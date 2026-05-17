@@ -12,6 +12,7 @@ caller. Reads happen via /api/audit-log.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from typing import Any, Optional
@@ -21,6 +22,20 @@ from app.models.audit_log import AuditLog
 
 _log = logging.getLogger(__name__)
 
+# Per-request current user (email). Set by AuthGateMiddleware on each request;
+# contextvars keep it isolated per async task so concurrent requests don't mix.
+_current_user: contextvars.ContextVar[str] = contextvars.ContextVar("audit_current_user", default="")
+
+
+def set_current_user(email: str) -> None:
+    """Record the logged-in user for the current request context."""
+    _current_user.set(email or "")
+
+
+def get_current_user() -> str:
+    """Return the user email recorded for the current request context."""
+    return _current_user.get()
+
 
 def log(
     action: str,
@@ -28,12 +43,19 @@ def log(
     status: str = "ok",
     message: str = "",
     details: Optional[Any] = None,
+    user: Optional[str] = None,
 ) -> None:
-    """Append one audit row. Never raises — failures only hit the app log."""
+    """Append one audit row. Never raises — failures only hit the app log.
+
+    `user` defaults to the logged-in user from the current request context.
+    Pass it explicitly only when logging outside a request (background tasks).
+    """
     try:
+        who = user if user is not None else _current_user.get()
         db = SessionLocal()
         try:
             row = AuditLog(
+                user=(who or "")[:128],
                 action=action[:64],
                 target=(target or "")[:256],
                 status=status[:16],

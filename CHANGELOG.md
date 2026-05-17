@@ -17,6 +17,14 @@
 - **Navbar แสดงชื่อผู้ใช้ที่ login** + ปุ่ม logout (แทนที่จะแสดง email ดิบ)
 - **Audit Log viewer** — ปุ่ม "Audit Log" บน toolbar เปิด modal ดูประวัติทุก
   action filter ตาม action/status ได้ — ไม่ต้อง curl `/api/audit-log` เอง
+- **Audit log บันทึก "ใคร" ทำ** — เพิ่มคอลัมน์ `user` (email จาก Google SSO)
+  ทุก action ผ่าน contextvar ที่ middleware เซ็ตทุก request
+  - `GET /api/audit-log/export.csv` — โหลดประวัติเป็น CSV (เปิดใน Excel/Sheets
+    ได้เลย มี BOM) filter ตาม action/status/target/user ได้
+  - `GET /api/audit-log/users` — สรุปการใช้งานรายผู้ใช้ (จำนวน action, error,
+    แยกตามชนิด action, ใช้งานครั้งแรก/ล่าสุด)
+  - Audit Log modal: คอลัมน์ "ผู้ใช้" + ช่องกรองตาม email + ปุ่ม "Export CSV"
+    + ปุ่ม "สรุปรายผู้ใช้"
 - **Health dashboard** — ปุ่ม "Health" เช็คสถานะ Mimir API / Gemini quota /
   Database พร้อม latency + progress bar quota + จุดสีเขียว/แดงบน navbar
   - `GET /api/health` endpoint ใหม่

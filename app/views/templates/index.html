@@ -3021,16 +3021,42 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
             <option value="ok">ok</option>
             <option value="error">error</option>
           </select>
-          <button class="btn btn-outline-secondary btn-sm" onclick="loadAuditLog()"><i class="bi bi-arrow-clockwise"></i></button>
+          <input id="audit-filter-user" type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                 style="width:170px" placeholder="กรองตามผู้ใช้ (email)"
+                 onkeydown="if(event.key==='Enter')loadAuditLog()">
+          <button class="btn btn-outline-secondary btn-sm" onclick="loadAuditLog()" title="โหลดใหม่"><i class="bi bi-arrow-clockwise"></i></button>
+          <button class="btn btn-outline-info btn-sm" onclick="toggleUserSummary()" title="สรุปการใช้งานรายผู้ใช้">
+            <i class="bi bi-people me-1"></i>สรุปรายผู้ใช้
+          </button>
+          <button class="btn btn-outline-success btn-sm" onclick="exportAuditCsv()" title="ดาวน์โหลดประวัติเป็นไฟล์ CSV">
+            <i class="bi bi-download me-1"></i>Export CSV
+          </button>
           <span id="audit-count" class="text-secondary ms-auto"></span>
         </div>
         <div id="audit-loading" class="text-center text-secondary py-4" style="display:none">
           <span class="spinner-border spinner-border-sm me-2"></span>กำลังโหลด…
         </div>
-        <table class="table table-sm table-dark table-hover" style="font-size:.78rem">
+        <!-- Per-user usage summary (hidden by default) -->
+        <div id="audit-user-summary" style="display:none" class="mb-3">
+          <table class="table table-sm table-dark table-hover" style="font-size:.78rem">
+            <thead>
+              <tr class="text-secondary">
+                <th>ผู้ใช้</th>
+                <th style="width:80px" class="text-end">ทั้งหมด</th>
+                <th style="width:80px" class="text-end">ผิดพลาด</th>
+                <th>การใช้งานแยกตาม action</th>
+                <th style="width:140px">ใช้งานล่าสุด</th>
+              </tr>
+            </thead>
+            <tbody id="audit-user-tbody"></tbody>
+          </table>
+          <div id="audit-user-empty" class="text-center text-secondary py-3" style="display:none">ยังไม่มีข้อมูลการใช้งาน</div>
+        </div>
+        <table id="audit-table" class="table table-sm table-dark table-hover" style="font-size:.78rem">
           <thead>
             <tr class="text-secondary">
               <th style="width:140px">เวลา</th>
+              <th style="width:150px">ผู้ใช้</th>
               <th style="width:110px">Action</th>
               <th style="width:64px">สถานะ</th>
               <th>รายละเอียด</th>
@@ -3136,17 +3162,24 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
     new bootstrap.Modal(document.getElementById('auditModal')).show();
     loadAuditLog();
   }
-  async function loadAuditLog() {
+  function _auditFilterParams() {
+    const qs = new URLSearchParams();
     const action = document.getElementById('audit-filter-action').value;
     const status = document.getElementById('audit-filter-status').value;
+    const user   = document.getElementById('audit-filter-user').value.trim();
+    if (action) qs.set('action', action);
+    if (status) qs.set('status', status);
+    if (user)   qs.set('user', user);
+    return qs;
+  }
+  async function loadAuditLog() {
     const tbody  = document.getElementById('audit-tbody');
     const loading = document.getElementById('audit-loading');
     const empty   = document.getElementById('audit-empty');
     tbody.innerHTML = ''; empty.style.display = 'none'; loading.style.display = 'block';
     try {
-      const qs = new URLSearchParams({ per_page: '100' });
-      if (action) qs.set('action', action);
-      if (status) qs.set('status', status);
+      const qs = _auditFilterParams();
+      qs.set('per_page', '100');
       const r = await fetch(`${_ROOT}/api/audit-log?${qs}`);
       const d = await r.json();
       loading.style.display = 'none';
@@ -3158,8 +3191,10 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
         const statusColor = it.status === 'error' ? '#e0726e'
                           : it.status === 'ok' ? '#5cb85c' : '#9aa';
         const tgt = it.target ? `<div style="color:#666;font-size:.7rem;word-break:break-all">${esc(it.target)}</div>` : '';
+        const who = it.user ? esc(it.user) : '<span style="color:#666">—</span>';
         return `<tr>
           <td style="color:#888;white-space:nowrap">${esc(ts)}</td>
+          <td style="color:#9cc;word-break:break-all">${who}</td>
           <td><code style="color:#7db">${esc(it.action)}</code></td>
           <td><span style="color:${statusColor}">${esc(it.status)}</span></td>
           <td>${esc(it.message || '')}${tgt}</td>
@@ -3167,6 +3202,49 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
       }).join('');
     } catch(e) {
       loading.style.display = 'none';
+      empty.textContent = 'โหลดไม่สำเร็จ: ' + e.message;
+      empty.style.display = 'block';
+    }
+  }
+  function exportAuditCsv() {
+    const qs = _auditFilterParams();
+    window.open(`${_ROOT}/api/audit-log/export.csv?${qs}`, '_blank');
+  }
+  function toggleUserSummary() {
+    const box = document.getElementById('audit-user-summary');
+    const show = box.style.display === 'none';
+    box.style.display = show ? 'block' : 'none';
+    if (show) loadUserSummary();
+  }
+  async function loadUserSummary() {
+    const tbody = document.getElementById('audit-user-tbody');
+    const empty = document.getElementById('audit-user-empty');
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary py-2">กำลังโหลด…</td></tr>';
+    empty.style.display = 'none';
+    try {
+      const r = await fetch(`${_ROOT}/api/audit-log/users`);
+      const d = await r.json();
+      if (!d.users || !d.users.length) {
+        tbody.innerHTML = ''; empty.style.display = 'block'; return;
+      }
+      tbody.innerHTML = d.users.map(u => {
+        const last = u.last_at ? new Date(u.last_at + 'Z').toLocaleString('th-TH',
+          {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+        const acts = Object.entries(u.by_action || {})
+          .sort((a,b) => b[1]-a[1])
+          .map(([k,v]) => `<code style="color:#7db">${esc(k)}</code>&nbsp;${v}`)
+          .join(' · ');
+        const errColor = u.errors > 0 ? '#e0726e' : '#666';
+        return `<tr>
+          <td style="color:#9cc;word-break:break-all">${esc(u.user)}</td>
+          <td class="text-end">${u.total}</td>
+          <td class="text-end" style="color:${errColor}">${u.errors}</td>
+          <td style="font-size:.72rem">${acts}</td>
+          <td style="color:#888;white-space:nowrap">${esc(last)}</td>
+        </tr>`;
+      }).join('');
+    } catch(e) {
+      tbody.innerHTML = '';
       empty.textContent = 'โหลดไม่สำเร็จ: ' + e.message;
       empty.style.display = 'block';
     }

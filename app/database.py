@@ -79,3 +79,9 @@ def run_migrations():
             conn.commit()
         except Exception:
             pass  # column already exists, or table not created yet (create_all handles new installs)
+        # audit_log.user — added 2026-05-17 for per-user usage tracking + CSV export
+        try:
+            conn.execute(text("ALTER TABLE audit_log ADD COLUMN \"user\" VARCHAR(128) DEFAULT ''"))
+            conn.commit()
+        except Exception:
+            pass  # column already exists, or table not created yet (create_all handles new installs)

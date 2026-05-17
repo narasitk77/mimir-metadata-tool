@@ -16,6 +16,7 @@ class AuditLog(Base):
 
     id        = Column(Integer, primary_key=True, autoincrement=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True, nullable=False)
+    user      = Column(String(128), index=True, default="")      # email of the logged-in user (from SSO session)
     action    = Column(String(64),  index=True, nullable=False)  # fetch / batch_start / push / push_all / reset / clear_db ...
     target    = Column(String(256), index=True, default="")      # item_id or folder_id or "all"
     status    = Column(String(16),  default="ok")                # ok / error / cancelled
@@ -26,6 +27,7 @@ class AuditLog(Base):
         return {
             "id":        self.id,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "user":      self.user or "",
             "action":    self.action,
             "target":    self.target or "",
             "status":    self.status or "ok",
