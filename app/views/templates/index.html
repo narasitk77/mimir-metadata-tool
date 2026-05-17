@@ -200,10 +200,10 @@
     <button id="btn-mimir-auth" class="btn btn-sm btn-outline-warning" onclick="openMimirLoginModal()" title="Mimir session (20 min)" style="padding:.2rem .6rem;font-size:.8rem">
       <i class="bi bi-key me-1"></i><span id="mimir-auth-label">Login Mimir</span>
     </button>
-    <span id="sso-user-badge" style="display:none;align-items:center;gap:6px;padding:.15rem .5rem;font-size:.8rem;color:#9aa;border:1px solid #2a2a2a;border-radius:6px">
+    <span id="sso-user-badge" title="" style="display:none;align-items:center;gap:6px;padding:.15rem .5rem;font-size:.8rem;color:#9aa;border:1px solid #2a2a2a;border-radius:6px">
       <img id="sso-user-pic" src="" alt="" style="width:18px;height:18px;border-radius:50%;display:none">
-      <span id="sso-user-email"></span>
-      <a href="#" onclick="ssoLogout(event)" title="Sign out" style="color:#9aa;text-decoration:none;margin-left:4px"><i class="bi bi-box-arrow-right"></i></a>
+      <span id="sso-user-name"></span>
+      <a href="#" onclick="ssoLogout(event)" title="ออกจากระบบ" style="color:#e0726e;text-decoration:none;margin-left:4px"><i class="bi bi-box-arrow-right"></i></a>
     </span>
     <button class="btn btn-sm btn-outline-secondary" onclick="openPeopleModal()" title="คลังบุคคล" style="padding:.2rem .6rem;font-size:.8rem">
       <i class="bi bi-people me-1"></i>คลังบุคคล
@@ -518,6 +518,9 @@
         </button>
         <button class="btn btn-outline-secondary btn-sm" onclick="showChangelog()">
           <i class="bi bi-journal-text me-1"></i>Changelog
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="openAuditLog()" title="ประวัติการทำงานทุก action ในระบบ">
+          <i class="bi bi-clipboard-check me-1"></i>Audit Log
         </button>
         <button class="btn btn-outline-secondary btn-sm" id="btn-backfill" onclick="backfillProxy()" title="Fetch proxy image URLs for assets that don't have one yet">
           <i class="bi bi-images me-1"></i>Backfill Proxy
@@ -2945,7 +2948,9 @@ async function refreshSsoUser() {
     if (!s.configured && !s.authenticated) { badge.style.display = 'none'; return; }
     if (s.authenticated) {
       badge.style.display = 'inline-flex';
-      document.getElementById('sso-user-email').textContent = s.email || '';
+      // Show display name (friendlier); fall back to email. Email on hover.
+      document.getElementById('sso-user-name').textContent = s.name || s.email || 'ผู้ใช้';
+      badge.title = s.email || '';
       const pic = document.getElementById('sso-user-pic');
       if (s.picture) { pic.src = s.picture; pic.style.display = 'inline-block'; }
     }
@@ -2984,6 +2989,100 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
     </form>
   </div>
 </div>
+
+<!-- ── Audit Log Modal ──────────────────────────────────────────────────── -->
+<div class="modal fade" id="auditModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-clipboard-check me-2"></i>Audit Log — ประวัติการทำงาน</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body small">
+        <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+          <select id="audit-filter-action" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto" onchange="loadAuditLog()">
+            <option value="">ทุก action</option>
+            <option value="fetch_start">fetch_start</option>
+            <option value="batch_start">batch_start</option>
+            <option value="push">push</option>
+            <option value="push_all_start">push_all_start</option>
+            <option value="push_all_done">push_all_done</option>
+            <option value="reset">reset</option>
+            <option value="clear_db">clear_db</option>
+            <option value="login">login</option>
+            <option value="logout">logout</option>
+            <option value="mimir_options_reset">mimir_options_reset</option>
+          </select>
+          <select id="audit-filter-status" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto" onchange="loadAuditLog()">
+            <option value="">ทุกสถานะ</option>
+            <option value="ok">ok</option>
+            <option value="error">error</option>
+          </select>
+          <button class="btn btn-outline-secondary btn-sm" onclick="loadAuditLog()"><i class="bi bi-arrow-clockwise"></i></button>
+          <span id="audit-count" class="text-secondary ms-auto"></span>
+        </div>
+        <div id="audit-loading" class="text-center text-secondary py-4" style="display:none">
+          <span class="spinner-border spinner-border-sm me-2"></span>กำลังโหลด…
+        </div>
+        <table class="table table-sm table-dark table-hover" style="font-size:.78rem">
+          <thead>
+            <tr class="text-secondary">
+              <th style="width:140px">เวลา</th>
+              <th style="width:110px">Action</th>
+              <th style="width:64px">สถานะ</th>
+              <th>รายละเอียด</th>
+            </tr>
+          </thead>
+          <tbody id="audit-tbody"></tbody>
+        </table>
+        <div id="audit-empty" class="text-center text-secondary py-4" style="display:none">ไม่มีรายการ</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Audit Log ──────────────────────────────────────────────────────────────
+  function openAuditLog() {
+    new bootstrap.Modal(document.getElementById('auditModal')).show();
+    loadAuditLog();
+  }
+  async function loadAuditLog() {
+    const action = document.getElementById('audit-filter-action').value;
+    const status = document.getElementById('audit-filter-status').value;
+    const tbody  = document.getElementById('audit-tbody');
+    const loading = document.getElementById('audit-loading');
+    const empty   = document.getElementById('audit-empty');
+    tbody.innerHTML = ''; empty.style.display = 'none'; loading.style.display = 'block';
+    try {
+      const qs = new URLSearchParams({ per_page: '100' });
+      if (action) qs.set('action', action);
+      if (status) qs.set('status', status);
+      const r = await fetch(`${_ROOT}/api/audit-log?${qs}`);
+      const d = await r.json();
+      loading.style.display = 'none';
+      document.getElementById('audit-count').textContent = `${d.items.length} / ${d.total} รายการ`;
+      if (!d.items.length) { empty.style.display = 'block'; return; }
+      tbody.innerHTML = d.items.map(it => {
+        const ts = it.timestamp ? new Date(it.timestamp + 'Z').toLocaleString('th-TH',
+          {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+        const statusColor = it.status === 'error' ? '#e0726e'
+                          : it.status === 'ok' ? '#5cb85c' : '#9aa';
+        const tgt = it.target ? `<div style="color:#666;font-size:.7rem;word-break:break-all">${esc(it.target)}</div>` : '';
+        return `<tr>
+          <td style="color:#888;white-space:nowrap">${esc(ts)}</td>
+          <td><code style="color:#7db">${esc(it.action)}</code></td>
+          <td><span style="color:${statusColor}">${esc(it.status)}</span></td>
+          <td>${esc(it.message || '')}${tgt}</td>
+        </tr>`;
+      }).join('');
+    } catch(e) {
+      loading.style.display = 'none';
+      empty.textContent = 'โหลดไม่สำเร็จ: ' + e.message;
+      empty.style.display = 'block';
+    }
+  }
+</script>
 
 </body>
 </html>
