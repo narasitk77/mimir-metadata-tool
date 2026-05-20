@@ -14,6 +14,27 @@
 
 ## 2026-05-17
 ### Added
+- **Automation — Watch folders + scheduler** — ดึงไฟล์ใหม่จาก Mimir อัตโนมัติ
+  ทุก 15 นาที แล้ว AI วิเคราะห์ให้เลย (คนยังกด Push เอง เซฟ ไม่ auto-push)
+  - APScheduler (`AsyncIOScheduler`) start ตอน lifespan + stop on shutdown
+  - ตาราง `watch_folders` (folder_id, label, enabled, last_polled_at,
+    last_new_count, last_error)
+  - Logic: ทุก tick → loop folder ที่ enabled → call `fetch_all_items()` เดิม →
+    นับ delta = pending ใหม่ → ถ้ามี + batch ว่าง → ทริก `run_batch_internal()`
+    (run batch loop ฝั่ง server ไม่ใช้ SSE) → Gemini วิเคราะห์ → status "done"
+  - Audit log heartbeat ทุก tick + auto_fetch + auto_batch + watch_folder_*
+    (รอบไหน scheduler ไม่ฟัน = รู้ทันทีจาก absence ใน audit)
+  - Usage history บันทึก batch_done ตามปกติ — รายงานรายเดือน/รายปีรวมงาน
+    automation ด้วย
+  - **Global kill-switch** — ปุ่ม Pause All (POST `/api/automation/pause`)
+    หยุดทุก folder พร้อมกันโดยไม่ต้องปิดทีละอัน
+  - Endpoint: GET/POST `/api/watch-folders`, PATCH/DELETE `/api/watch-folders/{id}`,
+    GET `/api/automation/status`, POST `/api/automation/pause`,
+    POST `/api/automation/run-now` (รันเดี๋ยวนี้ ไม่ต้องรอ 15 นาที)
+  - UI: ปุ่ม **Automation** บน toolbar (จุดสีเขียว = running, แดง = paused)
+    เปิด modal — สถานะ scheduler + รายการ folder + form เพิ่ม folder +
+    toggle เปิด/ปิดต่อ folder + ปุ่ม Pause All + Run Now
+  - `apscheduler>=3.10.0` เข้า requirements.txt
 - **Usage history — รายงานรายเดือน/รายปี/ราย user (data-driven)** — ตาราง
   `usage_history` แยกจาก `assets` เก็บ snapshot ทุกครั้งที่ batch จบ / push_all
   จบ / กด Clear DB → **Clear DB กี่รอบก็ไม่หาย**

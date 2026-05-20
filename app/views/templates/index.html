@@ -520,6 +520,10 @@
                 title="รายงานการใช้งานรายเดือน/รายปี/รายผู้ใช้ — ข้อมูลถาวร ไม่หายแม้ Clear DB">
           <i class="bi bi-graph-up-arrow me-1"></i>Usage
         </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="openAutomation()"
+                title="Watch folders — ดึงไฟล์ใหม่จาก Mimir ทุก 15 นาที แล้ว AI วิเคราะห์ให้อัตโนมัติ (คนยังกด Push เอง)">
+          <i class="bi bi-robot me-1"></i><span id="automation-dot" style="display:none;color:#5cb85c">●</span> Automation
+        </button>
         <button class="btn btn-outline-secondary btn-sm" onclick="showChangelog()">
           <i class="bi bi-journal-text me-1"></i>Changelog
         </button>
@@ -3019,6 +3023,14 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
             <option value="login">login</option>
             <option value="logout">logout</option>
             <option value="mimir_options_reset">mimir_options_reset</option>
+            <option value="scheduler_tick">scheduler_tick</option>
+            <option value="auto_fetch">auto_fetch</option>
+            <option value="auto_batch">auto_batch</option>
+            <option value="watch_folder_add">watch_folder_add</option>
+            <option value="watch_folder_update">watch_folder_update</option>
+            <option value="watch_folder_remove">watch_folder_remove</option>
+            <option value="automation_pause">automation_pause</option>
+            <option value="automation_resume">automation_resume</option>
           </select>
           <select id="audit-filter-status" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto" onchange="loadAuditLog()">
             <option value="">ทุกสถานะ</option>
@@ -3159,6 +3171,80 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
 
         <div id="usage-empty" class="text-center text-secondary py-4" style="display:none">
           ยังไม่มีข้อมูลการใช้งาน — รัน batch หรือ push อย่างน้อย 1 ครั้งหลัง deploy รอบนี้แล้วลองใหม่
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Automation Modal — Watch folders + scheduler ─────────────────────── -->
+<div class="modal fade" id="automationModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title">
+          <i class="bi bi-robot me-2"></i>Automation — ดึงไฟล์ใหม่จาก Mimir อัตโนมัติ
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body small">
+        <!-- Scheduler status banner -->
+        <div id="auto-status-banner" class="p-2 mb-3 rounded" style="background:#1a2a3a;border:1px solid #2c4a6a">
+          <div class="d-flex align-items-center gap-3 flex-wrap">
+            <div>
+              <span class="text-secondary">สถานะ:</span>
+              <strong id="auto-status-text">—</strong>
+            </div>
+            <div>
+              <span class="text-secondary">รอบทุก:</span>
+              <strong id="auto-interval">15</strong> นาที
+            </div>
+            <div>
+              <span class="text-secondary">รอบล่าสุด:</span>
+              <strong id="auto-last-tick">—</strong>
+            </div>
+            <div class="ms-auto d-flex gap-2">
+              <button id="auto-pause-btn" class="btn btn-sm btn-outline-warning" onclick="toggleAutomationPause()">
+                <i class="bi bi-pause-fill me-1"></i>Pause All
+              </button>
+              <button class="btn btn-sm btn-outline-info" onclick="automationRunNow()" title="รันรอบ poll เดี๋ยวนี้ ไม่ต้องรอ 15 นาที">
+                <i class="bi bi-arrow-clockwise me-1"></i>Run Now
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- How it works -->
+        <div class="text-secondary small mb-3" style="font-size:.72rem">
+          <i class="bi bi-info-circle me-1"></i>
+          ทุก 15 นาที scheduler จะดึง latest items จากแต่ละ folder ด้านล่าง — item_id ที่ยังไม่เคยเข้าระบบจะถูกเพิ่มเป็น "pending"
+          แล้วทริก batch Gemini อัตโนมัติ → status "done" รอ <strong>คนกด Push เอง</strong> (เซฟ ไม่ auto-push)
+        </div>
+
+        <!-- Add folder form -->
+        <div class="d-flex gap-2 mb-3 flex-wrap">
+          <input id="wf-url" type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                 style="flex:2;min-width:240px" placeholder="วาง Mimir Folder URL หรือ UUID">
+          <input id="wf-label" type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                 style="flex:1;min-width:160px" placeholder="ชื่อให้ดูง่าย (optional)">
+          <button class="btn btn-success btn-sm" onclick="addWatchFolder()"><i class="bi bi-plus-lg me-1"></i>เพิ่ม folder</button>
+        </div>
+
+        <!-- Folders table -->
+        <table class="table table-sm table-dark table-hover" style="font-size:.78rem">
+          <thead>
+            <tr class="text-secondary">
+              <th style="width:60px">เปิด</th>
+              <th>ชื่อ / Folder ID</th>
+              <th style="width:90px" class="text-end">ครั้งล่าสุด</th>
+              <th style="width:80px" class="text-end">เจอใหม่</th>
+              <th style="width:60px"></th>
+            </tr>
+          </thead>
+          <tbody id="wf-tbody"></tbody>
+        </table>
+        <div id="wf-empty" class="text-center text-secondary py-3" style="display:none">
+          ยังไม่มี watch folder — วาง URL จาก Mimir ด้านบนเพื่อเริ่ม
         </div>
       </div>
     </div>
@@ -3462,6 +3548,162 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
       empty.textContent = 'โหลดไม่สำเร็จ: ' + e.message;
       empty.style.display = 'block';
     }
+  }
+
+  // ── Automation — watch folders + scheduler ────────────────────────────────
+  function openAutomation() {
+    new bootstrap.Modal(document.getElementById('automationModal')).show();
+    loadAutomationStatus();
+    loadWatchFolders();
+  }
+  async function loadAutomationStatus() {
+    try {
+      const r = await fetch(`${_ROOT}/api/automation/status`);
+      const s = await r.json();
+      const txt = document.getElementById('auto-status-text');
+      const dot = document.getElementById('automation-dot');
+      const pauseBtn = document.getElementById('auto-pause-btn');
+      if (s.paused) {
+        txt.innerHTML = '<span style="color:#e0726e">⏸ Paused</span>';
+        if (dot) { dot.style.display = 'inline'; dot.style.color = '#e0726e'; }
+        pauseBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Resume';
+        pauseBtn.classList.replace('btn-outline-warning', 'btn-outline-success');
+      } else if (s.running) {
+        txt.innerHTML = '<span style="color:#5cb85c">● Running</span>';
+        if (dot) { dot.style.display = 'inline'; dot.style.color = '#5cb85c'; }
+        pauseBtn.innerHTML = '<i class="bi bi-pause-fill me-1"></i>Pause All';
+        pauseBtn.classList.replace('btn-outline-success', 'btn-outline-warning');
+      } else {
+        txt.innerHTML = '<span style="color:#888">Stopped</span>';
+        if (dot) dot.style.display = 'none';
+      }
+      document.getElementById('auto-interval').textContent = s.interval_minutes || 15;
+      const last = s.last_heartbeat_at;
+      if (last) {
+        const dt = new Date(last + 'Z');
+        const t = (s.last_tick && s.last_tick.new != null)
+          ? ` · เจอใหม่ ${s.last_tick.new}` : '';
+        document.getElementById('auto-last-tick').textContent =
+          dt.toLocaleString('th-TH', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) + t;
+      } else {
+        document.getElementById('auto-last-tick').textContent = 'ยังไม่ได้รัน';
+      }
+    } catch(e) {
+      document.getElementById('auto-status-text').textContent = 'โหลดไม่สำเร็จ';
+    }
+  }
+  async function loadWatchFolders() {
+    const tbody = document.getElementById('wf-tbody');
+    const empty = document.getElementById('wf-empty');
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary py-2">กำลังโหลด…</td></tr>';
+    empty.style.display = 'none';
+    try {
+      const r = await fetch(`${_ROOT}/api/watch-folders`);
+      const d = await r.json();
+      if (!d.items || !d.items.length) {
+        tbody.innerHTML = ''; empty.style.display = 'block'; return;
+      }
+      tbody.innerHTML = d.items.map(f => {
+        const last = f.last_polled_at
+          ? new Date(f.last_polled_at + 'Z').toLocaleString('th-TH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+          : '<span class="text-secondary">—</span>';
+        const newC = (f.last_new_count || 0);
+        const errBadge = f.last_error
+          ? `<div style="color:#e0726e;font-size:.7rem">err: ${esc(f.last_error)}</div>` : '';
+        return `<tr>
+          <td>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" ${f.enabled ? 'checked' : ''}
+                     onchange="setWatchFolderEnabled(${f.id}, this.checked)">
+            </div>
+          </td>
+          <td>
+            <div>${esc(f.label) || '<span class="text-secondary">(no label)</span>'}</div>
+            <code class="text-secondary" style="font-size:.7rem">${esc(f.folder_id)}</code>
+            ${errBadge}
+          </td>
+          <td class="text-end" style="color:#888;font-size:.72rem">${last}</td>
+          <td class="text-end" style="color:${newC > 0 ? '#5cb85c' : '#666'}">${newC}</td>
+          <td class="text-end">
+            <button class="btn btn-sm btn-outline-danger" style="padding:.1rem .4rem" onclick="removeWatchFolder(${f.id}, '${esc(f.label || f.folder_id)}')" title="ลบ folder">
+              <i class="bi bi-trash3"></i>
+            </button>
+          </td>
+        </tr>`;
+      }).join('');
+    } catch(e) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center text-secondary py-2">โหลดไม่สำเร็จ: ${esc(e.message)}</td></tr>`;
+    }
+  }
+  async function addWatchFolder() {
+    const url   = document.getElementById('wf-url').value.trim();
+    const label = document.getElementById('wf-label').value.trim();
+    if (!url) { alert('วาง Mimir Folder URL หรือ UUID ก่อน'); return; }
+    try {
+      const r = await fetch(`${_ROOT}/api/watch-folders`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({folder_url: url, label}),
+      });
+      const d = await r.json();
+      if (!r.ok) { alert('เพิ่มไม่สำเร็จ: ' + (d.detail || r.status)); return; }
+      document.getElementById('wf-url').value   = '';
+      document.getElementById('wf-label').value = '';
+      loadWatchFolders();
+    } catch(e) {
+      alert('เพิ่มไม่สำเร็จ: ' + e.message);
+    }
+  }
+  async function setWatchFolderEnabled(id, enabled) {
+    try {
+      await fetch(`${_ROOT}/api/watch-folders/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled}),
+      });
+    } catch(e) { alert('แก้ไม่สำเร็จ: ' + e.message); }
+  }
+  async function removeWatchFolder(id, label) {
+    if (!confirm(`ลบ watch folder "${label}" ?`)) return;
+    try {
+      await fetch(`${_ROOT}/api/watch-folders/${id}`, {method: 'DELETE'});
+      loadWatchFolders();
+    } catch(e) { alert('ลบไม่สำเร็จ: ' + e.message); }
+  }
+  async function toggleAutomationPause() {
+    try {
+      const r = await fetch(`${_ROOT}/api/automation/status`);
+      const s = await r.json();
+      const want = !s.paused;
+      await fetch(`${_ROOT}/api/automation/pause`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({paused: want}),
+      });
+      loadAutomationStatus();
+    } catch(e) { alert('สั่งไม่สำเร็จ: ' + e.message); }
+  }
+  async function automationRunNow() {
+    const btn = event.currentTarget;
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังรัน…';
+    try {
+      const r = await fetch(`${_ROOT}/api/automation/run-now`, {method: 'POST'});
+      const d = await r.json();
+      if (!r.ok) alert('Run failed: ' + (d.detail || r.status));
+      loadAutomationStatus();
+      loadWatchFolders();
+    } catch(e) {
+      alert('Run failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  }
+  // passive load on page boot so the navbar dot reflects state
+  if (typeof fetch !== 'undefined') {
+    setTimeout(() => { loadAutomationStatus().catch(()=>{}); }, 1500);
   }
 </script>
 

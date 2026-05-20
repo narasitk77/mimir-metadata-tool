@@ -21,6 +21,8 @@ from app.models.person import Person  # noqa: F401 — register with Base
 from app.models.audit_log import AuditLog  # noqa: F401 — register with Base
 from app.models.mimir_option import MimirOption  # noqa: F401 — register with Base
 from app.models.usage_history import UsageHistory  # noqa: F401 — register with Base
+from app.models.watch_folder import WatchFolder  # noqa: F401 — register with Base
+from app import scheduler as _scheduler
 from app.services import google_auth as _google_auth
 from app.views.routes import router
 
@@ -50,7 +52,20 @@ async def lifespan(app: FastAPI):
             _log.warning(f"Reset {len(stuck)} stuck 'processing' assets to pending")
     finally:
         db.close()
-    yield
+    # Automation scheduler — polls Mimir watch folders every 15 min for new
+    # items, auto-fetches them as pending, then auto-batches with Gemini.
+    # No-op until the user adds a watch folder via the Automation UI.
+    try:
+        _scheduler.start(interval_minutes=15)
+    except Exception as e:
+        _log.warning(f"Automation scheduler failed to start: {e}")
+    try:
+        yield
+    finally:
+        try:
+            _scheduler.stop()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="Mimir Metadata AI Tool", version="2.1.0", lifespan=lifespan)

@@ -76,6 +76,7 @@ from app.models.audit_log import AuditLog
 from app.models.mimir_option import MimirOption
 from app.models.person import Person
 from app.models.usage_history import UsageHistory
+from app.models.watch_folder import WatchFolder
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1376,6 +1377,80 @@ async def _save_report_snapshot(db_session) -> Optional[str]:
         return None
 
 
+async def run_batch_internal(album_keys=None, user: str = "__scheduler__", source: str = "scheduler") -> dict:
+    """Run a Gemini batch loop server-side without SSE — used by the scheduler.
+
+    Mirrors batch_stream's lifecycle (sets _running, captures start time,
+    records usage_history at done) but consumes the generator internally so
+    there's no client to push events to. Returns a dict summary.
+    """
+    global _batch_started_at
+    async with _run_lock:
+        if _running["batch"]:
+            return {"skipped": True, "reason": "batch already running"}
+        if not settings.GEMINI_API_KEY:
+            return {"skipped": True, "reason": "GEMINI_API_KEY not set"}
+        db0 = SessionLocal()
+        try:
+            pending_count = db0.query(Asset).filter(Asset.status == "pending").count()
+        finally:
+            db0.close()
+        if pending_count == 0:
+            return {"skipped": True, "reason": "no pending assets"}
+        _running["batch"] = True
+        _batch_started_at = None
+        _cancel["batch"] = False
+
+    audit_log("batch_start", target=",".join(album_keys or []) or "all",
+              message=f"Auto-batch started ({pending_count} pending, source={source})",
+              details={"album_keys": album_keys, "pending": pending_count,
+                       "source": source, "auto": True},
+              user=user)
+
+    batch_start_dt = datetime.utcnow()
+    final_event: dict = {}
+    try:
+        async for event in run_gemini_batch(album_keys=album_keys, cancel_flag=_cancel):
+            etype = event.get("type")
+            if etype == "done":
+                final_event = event
+                db = SessionLocal()
+                try:
+                    await _save_report_snapshot(db)
+                    from sqlalchemy import func
+                    stats = db.query(
+                        func.count(Asset.item_id),
+                        func.sum(Asset.tokens_input),
+                        func.sum(Asset.tokens_output),
+                    ).filter(Asset.status == "done",
+                             Asset.processed_at >= batch_start_dt).first()
+                    n  = int(stats[0] or 0)
+                    ti = float(stats[1] or 0)
+                    to = float(stats[2] or 0)
+                    if n > 0:
+                        price_in, price_out = _get_pricing()
+                        cost = (ti / 1e6) * price_in + (to / 1e6) * price_out
+                        duration = int((datetime.utcnow() - batch_start_dt).total_seconds())
+                        usage_history.record(
+                            "batch_done",
+                            folder_label=f"(auto via {source})",
+                            assets_count=n,
+                            tokens_input=ti, tokens_output=to,
+                            cost_usd=cost, duration_sec=duration,
+                            notes=f"Auto-batch triggered by {source}",
+                            user=user,
+                        )
+                finally:
+                    db.close()
+                break
+            if etype in ("rate_limit", "cancelled", "error"):
+                final_event = event
+                break
+    finally:
+        _running["batch"] = False
+    return {"ok": True, "final": final_event}
+
+
 @router.get("/api/batch/stream")
 async def batch_stream():
     global _batch_started_at
@@ -1961,6 +2036,101 @@ async def export_usage_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=usage{suffix}_{ts}.csv"},
     )
+
+
+# ── API: Automation — watch folders + scheduler control ───────────────────────
+
+class WatchFolderCreate(BaseModel):
+    folder_url: str   # accepts Mimir URL or raw UUID
+    label:      Optional[str] = ""
+
+
+class WatchFolderUpdate(BaseModel):
+    label:   Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+@router.get("/api/watch-folders")
+async def list_watch_folders(db: Session = Depends(get_db)):
+    rows = db.query(WatchFolder).order_by(WatchFolder.id.desc()).all()
+    return {"items": [r.to_dict() for r in rows]}
+
+
+@router.post("/api/watch-folders")
+async def add_watch_folder(body: WatchFolderCreate, db: Session = Depends(get_db)):
+    try:
+        folder_id = extract_folder_id(body.folder_url.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    existing = db.query(WatchFolder).filter(WatchFolder.folder_id == folder_id).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Folder already watched")
+    wf = WatchFolder(folder_id=folder_id, label=(body.label or "")[:256], enabled=True)
+    db.add(wf)
+    db.commit()
+    db.refresh(wf)
+    audit_log("watch_folder_add", target=folder_id, message=f"Added {wf.label or folder_id}",
+              details={"folder_id": folder_id, "label": wf.label})
+    return wf.to_dict()
+
+
+@router.patch("/api/watch-folders/{wf_id}")
+async def update_watch_folder(wf_id: int, body: WatchFolderUpdate, db: Session = Depends(get_db)):
+    wf = db.query(WatchFolder).get(wf_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Not found")
+    if body.label is not None:
+        wf.label = body.label[:256]
+    if body.enabled is not None:
+        wf.enabled = bool(body.enabled)
+    db.commit()
+    audit_log("watch_folder_update", target=wf.folder_id,
+              message=f"Updated {wf.label or wf.folder_id} (enabled={wf.enabled})",
+              details=wf.to_dict())
+    return wf.to_dict()
+
+
+@router.delete("/api/watch-folders/{wf_id}")
+async def delete_watch_folder(wf_id: int, db: Session = Depends(get_db)):
+    wf = db.query(WatchFolder).get(wf_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Not found")
+    folder_id = wf.folder_id
+    label     = wf.label
+    db.delete(wf)
+    db.commit()
+    audit_log("watch_folder_remove", target=folder_id, message=f"Removed {label or folder_id}",
+              details={"folder_id": folder_id, "label": label})
+    return {"ok": True}
+
+
+@router.get("/api/automation/status")
+async def automation_status():
+    """Scheduler heartbeat + last-tick summary for the Automation UI."""
+    from app import scheduler as _sched
+    return _sched.status()
+
+
+class AutomationPauseRequest(BaseModel):
+    paused: bool
+
+
+@router.post("/api/automation/pause")
+async def automation_pause(body: AutomationPauseRequest):
+    """Global kill-switch — stop all auto-polling without disabling each folder."""
+    from app import scheduler as _sched
+    _sched.set_paused(body.paused)
+    return _sched.status()
+
+
+@router.post("/api/automation/run-now")
+async def automation_run_now():
+    """Trigger one poll cycle immediately (for testing without waiting 15 min)."""
+    from app import scheduler as _sched
+    if _sched.is_paused():
+        raise HTTPException(status_code=409, detail="Automation is paused — resume first")
+    await _sched.poll_all_folders()
+    return _sched.status()
 
 
 @router.post("/api/assets/{item_id}/push")

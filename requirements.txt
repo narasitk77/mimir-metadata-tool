@@ -11,3 +11,4 @@ Pillow>=10.0.0
 pycognito>=0.4.0
 itsdangerous>=2.1.0
 starlette[full]>=0.27.0
+apscheduler>=3.10.0
