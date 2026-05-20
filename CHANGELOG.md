@@ -14,6 +14,21 @@
 
 ## 2026-05-17
 ### Added
+- **Automation safety nets** (ใส่ก่อน deploy):
+  - **Auto-restart watchdog** — `/api/automation/status` ทุก request เช็คว่า
+    scheduler ตายมั้ย ถ้าตาย → restart อัตโนมัติ + log `scheduler_restart`
+    audit (เปิด Automation modal = ปลุก scheduler ให้ทันที)
+  - **Health probe** เช็ค `is_healthy()` = scheduler running + heartbeat
+    ภายใน 2× interval + 1 นาที slack — เกินนั้นถือว่าสตอลล์
+  - **Live cost banner** — โชว์ "วันนี้: $X.XXXX (฿XX)" + warn threshold บน
+    Automation modal real-time (ดึงจาก `usage_history` วันปัจจุบัน UTC)
+  - **Daily warn threshold** env `AUTOMATION_DAILY_WARN_USD` (default $5/วัน)
+    — เกินแล้ว banner เปลี่ยนเป็นสีเหลือง + เขียน audit `automation_cost_warn`
+    ครั้งเดียวต่อวัน — **ไม่ pause** (ตามที่ user ระบุ)
+  - **Scheduler component ใน /api/health** — Health dashboard โชว์
+    "Automation" row พร้อม heartbeat age + today's cost
+  - **Stale heartbeat alert** — UI banner เปลี่ยนกรอบเป็นแดงถ้า scheduler
+    "running" แต่ heartbeat ไม่ขยับ (auto-restart watchdog ควรกู้ทัน)
 - **Automation — Watch folders + scheduler** — ดึงไฟล์ใหม่จาก Mimir อัตโนมัติ
   ทุก 15 นาที แล้ว AI วิเคราะห์ให้เลย (คนยังกด Push เอง เซฟ ไม่ auto-push)
   - APScheduler (`AsyncIOScheduler`) start ตอน lifespan + stop on shutdown

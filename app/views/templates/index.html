@@ -3031,6 +3031,8 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
             <option value="watch_folder_remove">watch_folder_remove</option>
             <option value="automation_pause">automation_pause</option>
             <option value="automation_resume">automation_resume</option>
+            <option value="automation_cost_warn">automation_cost_warn</option>
+            <option value="scheduler_restart">scheduler_restart</option>
           </select>
           <select id="audit-filter-status" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto" onchange="loadAuditLog()">
             <option value="">ทุกสถานะ</option>
@@ -3189,7 +3191,7 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
       </div>
       <div class="modal-body small">
         <!-- Scheduler status banner -->
-        <div id="auto-status-banner" class="p-2 mb-3 rounded" style="background:#1a2a3a;border:1px solid #2c4a6a">
+        <div id="auto-status-banner" class="p-2 mb-2 rounded" style="background:#1a2a3a;border:1px solid #2c4a6a">
           <div class="d-flex align-items-center gap-3 flex-wrap">
             <div>
               <span class="text-secondary">สถานะ:</span>
@@ -3211,6 +3213,24 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
                 <i class="bi bi-arrow-clockwise me-1"></i>Run Now
               </button>
             </div>
+          </div>
+        </div>
+
+        <!-- Live cost banner — visibility into spend even without a hard cap -->
+        <div id="auto-cost-banner" class="p-2 mb-3 rounded d-flex align-items-center gap-3 flex-wrap"
+             style="background:#1a2a1a;border:1px solid #2c4a2c">
+          <div>
+            <span class="text-secondary">วันนี้ (UTC):</span>
+            <strong id="auto-today-cost" style="font-size:1.05rem">$0.0000</strong>
+            <span id="auto-today-cost-thb" class="text-secondary" style="font-size:.72rem">(฿0.00)</span>
+          </div>
+          <div>
+            <span class="text-secondary">Warn threshold:</span>
+            <strong id="auto-warn-threshold">$5.00</strong>/วัน
+            <span class="text-secondary" style="font-size:.7rem">— env <code>AUTOMATION_DAILY_WARN_USD</code></span>
+          </div>
+          <div id="auto-cost-warning" class="ms-auto" style="display:none;color:#ffc107">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>เกิน warn threshold — กด Pause All ได้ถ้าจะหยุด
           </div>
         </div>
 
@@ -3302,6 +3322,7 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
       html += row('bi-hdd-stack', 'Database', c.database);
       html += row('bi-cloud',      'Mimir API', c.mimir);
       html += row('bi-cpu',        'Gemini',    c.gemini);
+      if (c.scheduler) html += row('bi-robot', 'Automation', c.scheduler);
       // Gemini quota bars
       if (c.gemini && (c.gemini.rpd_pct != null)) {
         const bar = (label, pct) => {
@@ -3563,30 +3584,80 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
       const txt = document.getElementById('auto-status-text');
       const dot = document.getElementById('automation-dot');
       const pauseBtn = document.getElementById('auto-pause-btn');
+      const healthy = !!s.healthy;
+      const banner = document.getElementById('auto-status-banner');
+
       if (s.paused) {
         txt.innerHTML = '<span style="color:#e0726e">⏸ Paused</span>';
         if (dot) { dot.style.display = 'inline'; dot.style.color = '#e0726e'; }
         pauseBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Resume';
-        pauseBtn.classList.replace('btn-outline-warning', 'btn-outline-success');
-      } else if (s.running) {
+        pauseBtn.classList.remove('btn-outline-warning');
+        pauseBtn.classList.add('btn-outline-success');
+      } else if (s.running && healthy) {
         txt.innerHTML = '<span style="color:#5cb85c">● Running</span>';
         if (dot) { dot.style.display = 'inline'; dot.style.color = '#5cb85c'; }
         pauseBtn.innerHTML = '<i class="bi bi-pause-fill me-1"></i>Pause All';
-        pauseBtn.classList.replace('btn-outline-success', 'btn-outline-warning');
+        pauseBtn.classList.remove('btn-outline-success');
+        pauseBtn.classList.add('btn-outline-warning');
+      } else if (s.running && !healthy) {
+        // Running flag set but heartbeat stale → red alert
+        txt.innerHTML = '<span style="color:#ff6b6b">⚠ Stale (heartbeat ค้าง)</span>';
+        if (dot) { dot.style.display = 'inline'; dot.style.color = '#ff6b6b'; }
       } else {
         txt.innerHTML = '<span style="color:#888">Stopped</span>';
         if (dot) dot.style.display = 'none';
       }
+
+      // Banner border color reflects health
+      if (!healthy && !s.paused) {
+        banner.style.borderColor = '#c0392b';
+        banner.style.background  = '#3a1a1a';
+      } else {
+        banner.style.borderColor = '#2c4a6a';
+        banner.style.background  = '#1a2a3a';
+      }
+
       document.getElementById('auto-interval').textContent = s.interval_minutes || 15;
       const last = s.last_heartbeat_at;
+      const ageSec = s.heartbeat_age_sec;
       if (last) {
         const dt = new Date(last + 'Z');
-        const t = (s.last_tick && s.last_tick.new != null)
+        const ageText = ageSec != null
+          ? (ageSec < 60 ? `${ageSec} วิที่แล้ว`
+            : ageSec < 3600 ? `${Math.floor(ageSec/60)} นาทีที่แล้ว`
+            : `${Math.floor(ageSec/3600)} ชม.ที่แล้ว`) : '';
+        const newTxt = (s.last_tick && s.last_tick.new != null)
           ? ` · เจอใหม่ ${s.last_tick.new}` : '';
-        document.getElementById('auto-last-tick').textContent =
-          dt.toLocaleString('th-TH', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) + t;
+        document.getElementById('auto-last-tick').innerHTML =
+          `${dt.toLocaleString('th-TH', {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`
+          + ` <span class="text-secondary" style="font-size:.72rem">(${ageText})</span>${newTxt}`;
       } else {
         document.getElementById('auto-last-tick').textContent = 'ยังไม่ได้รัน';
+      }
+
+      // Live cost banner
+      const costUsd = s.today_cost_usd || 0;
+      const costThb = s.today_cost_thb || 0;
+      const warnUsd = s.today_warn_usd || 5;
+      const exceeded = !!s.today_warn_exceeded;
+      const costEl = document.getElementById('auto-today-cost');
+      const costThbEl = document.getElementById('auto-today-cost-thb');
+      const warnEl = document.getElementById('auto-warn-threshold');
+      const warnBanner = document.getElementById('auto-cost-banner');
+      const warnMsg = document.getElementById('auto-cost-warning');
+      costEl.textContent = `$${costUsd.toFixed(4)}`;
+      costThbEl.textContent = `(฿${costThb.toFixed(2)})`;
+      warnEl.textContent = `$${warnUsd.toFixed(2)}`;
+      if (exceeded) {
+        costEl.style.color = '#ffc107';
+        warnBanner.style.background  = '#3a3a1a';
+        warnBanner.style.borderColor = '#6a6a2c';
+        warnMsg.style.display = 'inline';
+      } else {
+        costEl.style.color = '#9cf';
+        warnBanner.style.background  = '#1a2a1a';
+        warnBanner.style.borderColor = '#2c4a2c';
+        warnMsg.style.display = 'none';
       }
     } catch(e) {
       document.getElementById('auto-status-text').textContent = 'โหลดไม่สำเร็จ';

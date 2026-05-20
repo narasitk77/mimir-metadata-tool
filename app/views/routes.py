@@ -1179,6 +1179,29 @@ async def health_detail(db: Session = Depends(get_db)):
         "tpd_pct": tpd_pct,
     }
 
+    # ── Automation scheduler ──────────────────────────────────────────────
+    from app import scheduler as _sched
+    _sched.ensure_running()  # opportunistic self-heal on every health probe
+    s = _sched.status()
+    age = s.get("heartbeat_age_sec")
+    if s["paused"]:
+        sched_detail = "paused (intentional)"
+    elif age is None:
+        sched_detail = f"starting · today ${s['today_cost_usd']:.4f}"
+    else:
+        sched_detail = (f"heartbeat {age}s ago · interval {s['interval_minutes']}m · "
+                        f"today ${s['today_cost_usd']:.4f}")
+        if s["today_warn_exceeded"]:
+            sched_detail += f" ⚠ over ${s['today_warn_usd']}/d warn"
+    components["scheduler"] = {
+        "ok": bool(s["healthy"]),
+        "latency_ms": None,
+        "detail": sched_detail,
+        "interval_minutes":   s["interval_minutes"],
+        "today_cost_usd":     s["today_cost_usd"],
+        "today_warn_exceeded": s["today_warn_exceeded"],
+    }
+
     all_ok = all(c["ok"] for c in components.values())
     return {
         "ok": all_ok,
@@ -2106,8 +2129,14 @@ async def delete_watch_folder(wf_id: int, db: Session = Depends(get_db)):
 
 @router.get("/api/automation/status")
 async def automation_status():
-    """Scheduler heartbeat + last-tick summary for the Automation UI."""
+    """Scheduler heartbeat + last-tick summary + today's cost.
+
+    Also self-heals: if the scheduler thread died, restart it before
+    answering. This makes every status poll a watchdog tick — the moment
+    the UI asks, dead schedulers come back.
+    """
     from app import scheduler as _sched
+    _sched.ensure_running()
     return _sched.status()
 
 

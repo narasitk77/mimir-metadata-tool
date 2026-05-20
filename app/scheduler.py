@@ -17,6 +17,7 @@ clicks "Push All" in the UI.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -27,7 +28,12 @@ from app.audit import log as audit_log, set_current_user
 from app.controllers.mimir_controller import fetch_all_items
 from app.database import SessionLocal
 from app.models.asset import Asset
+from app.models.usage_history import UsageHistory
 from app.models.watch_folder import WatchFolder
+
+# Daily spend warning threshold (USD). Doesn't pause — just turns the banner
+# yellow + writes an audit warning so a human notices. Override via env.
+DAILY_WARN_USD = float(os.getenv("AUTOMATION_DAILY_WARN_USD", "5.0"))
 
 _log = logging.getLogger(__name__)
 
@@ -36,6 +42,7 @@ _paused: bool = False
 _interval_minutes: int = 15
 _last_heartbeat_at: Optional[datetime] = None
 _last_tick_summary: dict = {}
+_cost_warned_date: Optional[str] = None  # YYYY-MM-DD — audit warns once per day
 
 SCHEDULER_USER = "__scheduler__"
 
@@ -52,14 +59,86 @@ def set_paused(v: bool) -> None:
               user=SCHEDULER_USER)
 
 
+def heartbeat_age_seconds() -> Optional[int]:
+    if _last_heartbeat_at is None:
+        return None
+    return int((datetime.utcnow() - _last_heartbeat_at).total_seconds())
+
+
+def is_healthy() -> bool:
+    """Healthy = scheduler exists, .running, and heartbeat is recent.
+
+    Heartbeat tolerance = 2× interval + 1 min slack — gives APScheduler room
+    to delay a tick under load without flapping the health signal.
+    """
+    if _scheduler is None or not _scheduler.running:
+        return False
+    if _paused:
+        # Paused is intentional → still report healthy (the user did this).
+        return True
+    age = heartbeat_age_seconds()
+    if age is None:
+        return True  # not run yet — give it grace until first tick
+    return age < (_interval_minutes * 60 * 2 + 60)
+
+
+def ensure_running(interval_minutes: Optional[int] = None) -> dict:
+    """Self-heal: if scheduler was never started OR died, (re)start it.
+
+    Called on every `/api/automation/status` request so the moment a user
+    opens the Automation modal or the navbar polls the dot, we recover.
+    Returns {restarted: bool, healthy: bool}.
+    """
+    iv = interval_minutes if interval_minutes is not None else _interval_minutes
+    restarted = False
+    if _scheduler is None:
+        start(iv)
+        restarted = True
+    elif not _scheduler.running:
+        try:
+            stop()
+        except Exception:
+            pass
+        start(iv)
+        restarted = True
+    if restarted:
+        audit_log("scheduler_restart", target="auto",
+                  message="Scheduler was not running — auto-restarted",
+                  details={"interval_minutes": iv}, user=SCHEDULER_USER)
+    return {"restarted": restarted, "healthy": is_healthy()}
+
+
+def _today_cost_usd() -> float:
+    """Sum usage_history.cost_usd for the current UTC day."""
+    db = SessionLocal()
+    try:
+        from sqlalchemy import func
+        start_of_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        total = db.query(func.coalesce(func.sum(UsageHistory.cost_usd), 0.0)).filter(
+            UsageHistory.timestamp >= start_of_day
+        ).scalar()
+        return float(total or 0.0)
+    except Exception:
+        return 0.0
+    finally:
+        db.close()
+
+
 def status() -> dict:
-    """Snapshot for the UI's automation panel."""
+    """Snapshot for the UI's automation panel + health dashboard."""
+    today_cost = _today_cost_usd()
     return {
-        "running":           _scheduler is not None and _scheduler.running,
-        "paused":            _paused,
-        "interval_minutes":  _interval_minutes,
-        "last_heartbeat_at": _last_heartbeat_at.isoformat() if _last_heartbeat_at else None,
-        "last_tick":         _last_tick_summary,
+        "running":             _scheduler is not None and _scheduler.running,
+        "paused":              _paused,
+        "healthy":             is_healthy(),
+        "interval_minutes":    _interval_minutes,
+        "last_heartbeat_at":   _last_heartbeat_at.isoformat() if _last_heartbeat_at else None,
+        "heartbeat_age_sec":   heartbeat_age_seconds(),
+        "last_tick":           _last_tick_summary,
+        "today_cost_usd":      round(today_cost, 4),
+        "today_cost_thb":      round(today_cost * 34, 2),
+        "today_warn_usd":      DAILY_WARN_USD,
+        "today_warn_exceeded": today_cost >= DAILY_WARN_USD,
     }
 
 
@@ -161,6 +240,19 @@ async def poll_all_folders() -> None:
         "folders_ok": folders_ok,
         "folders_err": folders_err,
     }
+
+    # Daily cost warn — once per day, not on every tick. Doesn't pause.
+    global _cost_warned_date
+    today = _last_heartbeat_at.strftime("%Y-%m-%d")
+    today_cost = _today_cost_usd()
+    if today_cost >= DAILY_WARN_USD and _cost_warned_date != today:
+        _cost_warned_date = today
+        audit_log("automation_cost_warn", target="all", status="error",
+                  message=(f"Today's spend ${today_cost:.4f} crossed warn "
+                           f"threshold ${DAILY_WARN_USD:.2f} — automation still running"),
+                  details={"today_cost_usd": round(today_cost, 4),
+                           "warn_usd": DAILY_WARN_USD},
+                  user=SCHEDULER_USER)
 
     # Kick off auto-batch if anything new + no manual batch in flight.
     if total_new > 0:
