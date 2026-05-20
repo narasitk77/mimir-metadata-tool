@@ -516,6 +516,10 @@
         <button class="btn btn-outline-secondary btn-sm" onclick="openReport()">
           <i class="bi bi-bar-chart-line me-1"></i>Report
         </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="openUsage()"
+                title="รายงานการใช้งานรายเดือน/รายปี/รายผู้ใช้ — ข้อมูลถาวร ไม่หายแม้ Clear DB">
+          <i class="bi bi-graph-up-arrow me-1"></i>Usage
+        </button>
         <button class="btn btn-outline-secondary btn-sm" onclick="showChangelog()">
           <i class="bi bi-journal-text me-1"></i>Changelog
         </button>
@@ -3070,6 +3074,97 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
   </div>
 </div>
 
+<!-- ── Usage Modal — Monthly/yearly performance dashboard ──────────────── -->
+<div class="modal fade" id="usageModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title">
+          <i class="bi bi-graph-up-arrow me-2"></i>Usage Report — รายงานการใช้งาน
+          <span class="text-secondary" style="font-size:.7rem">· ข้อมูลถาวร ไม่หายแม้ Clear DB</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body small">
+        <!-- Filter bar -->
+        <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+          <label class="text-secondary">ตั้งแต่</label>
+          <input id="usage-from" type="date" class="form-control form-control-sm bg-dark text-light border-secondary" style="width:auto" onchange="loadUsage()">
+          <label class="text-secondary">ถึง</label>
+          <input id="usage-to" type="date" class="form-control form-control-sm bg-dark text-light border-secondary" style="width:auto" onchange="loadUsage()">
+          <button class="btn btn-outline-secondary btn-sm" onclick="usageRangeAll()">ทั้งหมด</button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="usageRange(30)">30 วัน</button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="usageRange(90)">90 วัน</button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="usageRangeYear()">ปีนี้</button>
+          <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-outline-success btn-sm" onclick="exportUsage('')"><i class="bi bi-download me-1"></i>CSV (raw)</button>
+            <button class="btn btn-outline-success btn-sm" onclick="exportUsage('month')"><i class="bi bi-calendar-month me-1"></i>CSV รายเดือน</button>
+            <button class="btn btn-outline-success btn-sm" onclick="exportUsage('year')"><i class="bi bi-calendar me-1"></i>CSV รายปี</button>
+            <button class="btn btn-outline-success btn-sm" onclick="exportUsage('user')"><i class="bi bi-person me-1"></i>CSV รายผู้ใช้</button>
+          </div>
+        </div>
+
+        <div id="usage-loading" class="text-center text-secondary py-4">
+          <span class="spinner-border spinner-border-sm me-2"></span>กำลังโหลด…
+        </div>
+
+        <div id="usage-body" style="display:none">
+          <!-- Overview cards -->
+          <div class="row g-2 mb-3">
+            <div class="col-md-4">
+              <div class="p-3 rounded" style="background:#1a2a3a;border:1px solid #2c4a6a">
+                <div class="text-secondary" style="font-size:.72rem">ทั้งหมด (all-time)</div>
+                <div id="usage-card-all" class="mt-1"></div>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="p-3 rounded" style="background:#1a3a2a;border:1px solid #2c6a4a">
+                <div class="text-secondary" style="font-size:.72rem">ปีนี้</div>
+                <div id="usage-card-year" class="mt-1"></div>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="p-3 rounded" style="background:#3a2a1a;border:1px solid #6a4a2c">
+                <div class="text-secondary" style="font-size:.72rem">เดือนนี้</div>
+                <div id="usage-card-month" class="mt-1"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Monthly bars -->
+          <h6 class="text-secondary mt-3"><i class="bi bi-calendar-month me-1"></i>รายเดือน</h6>
+          <div id="usage-monthly-bars" class="mb-3"></div>
+
+          <!-- By year -->
+          <h6 class="text-secondary mt-3"><i class="bi bi-calendar me-1"></i>รายปี</h6>
+          <table class="table table-sm table-dark table-hover" style="font-size:.78rem">
+            <thead><tr class="text-secondary"><th>ปี</th><th class="text-end">ภาพ</th><th class="text-end">Tokens</th><th class="text-end">Cost USD</th><th class="text-end">Cost THB</th><th class="text-end">ผู้ใช้</th><th class="text-end">งาน</th></tr></thead>
+            <tbody id="usage-year-tbody"></tbody>
+          </table>
+
+          <!-- Performance ranking by user -->
+          <h6 class="text-secondary mt-3"><i class="bi bi-trophy me-1"></i>Performance — รายผู้ใช้</h6>
+          <table class="table table-sm table-dark table-hover" style="font-size:.78rem">
+            <thead><tr class="text-secondary"><th style="width:36px">#</th><th>ผู้ใช้</th><th class="text-end">ภาพ</th><th class="text-end">Tokens</th><th class="text-end">Cost USD</th><th class="text-end">Cost THB</th><th class="text-end">งาน</th></tr></thead>
+            <tbody id="usage-user-tbody"></tbody>
+          </table>
+
+          <!-- By folder -->
+          <h6 class="text-secondary mt-3"><i class="bi bi-folder2 me-1"></i>รายอัลบั้ม</h6>
+          <table class="table table-sm table-dark table-hover" style="font-size:.78rem">
+            <thead><tr class="text-secondary"><th>อัลบั้ม</th><th class="text-end">ภาพ</th><th class="text-end">Tokens</th><th class="text-end">Cost USD</th><th class="text-end">Cost THB</th><th class="text-end">งาน</th></tr></thead>
+            <tbody id="usage-folder-tbody"></tbody>
+          </table>
+        </div>
+
+        <div id="usage-empty" class="text-center text-secondary py-4" style="display:none">
+          ยังไม่มีข้อมูลการใช้งาน — รัน batch หรือ push อย่างน้อย 1 ครั้งหลัง deploy รอบนี้แล้วลองใหม่
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Health Modal ─────────────────────────────────────────────────────── -->
 <div class="modal fade" id="healthModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-scrollable">
@@ -3245,6 +3340,125 @@ document.addEventListener('DOMContentLoaded', refreshSsoUser);
       }).join('');
     } catch(e) {
       tbody.innerHTML = '';
+      empty.textContent = 'โหลดไม่สำเร็จ: ' + e.message;
+      empty.style.display = 'block';
+    }
+  }
+
+  // ── Usage Report — monthly/yearly performance ─────────────────────────────
+  function openUsage() {
+    new bootstrap.Modal(document.getElementById('usageModal')).show();
+    loadUsage();
+  }
+  function usageRange(days) {
+    const to = new Date();
+    const from = new Date(); from.setDate(to.getDate() - days);
+    document.getElementById('usage-from').value = from.toISOString().slice(0,10);
+    document.getElementById('usage-to').value   = to.toISOString().slice(0,10);
+    loadUsage();
+  }
+  function usageRangeYear() {
+    const to = new Date();
+    document.getElementById('usage-from').value = to.getFullYear() + '-01-01';
+    document.getElementById('usage-to').value   = to.toISOString().slice(0,10);
+    loadUsage();
+  }
+  function usageRangeAll() {
+    document.getElementById('usage-from').value = '';
+    document.getElementById('usage-to').value   = '';
+    loadUsage();
+  }
+  function _usageParams() {
+    const qs = new URLSearchParams();
+    const frm = document.getElementById('usage-from').value;
+    const to  = document.getElementById('usage-to').value;
+    if (frm) qs.set('frm', frm);
+    if (to)  qs.set('to',  to);
+    return qs;
+  }
+  function exportUsage(group) {
+    const qs = _usageParams();
+    if (group) qs.set('group', group);
+    window.open(`${_ROOT}/api/usage/export.csv?${qs}`, '_blank');
+  }
+  function _fmtCard(d) {
+    return `
+      <div style="font-size:1.5rem;font-weight:600">${(d.assets||0).toLocaleString()}</div>
+      <div class="text-secondary" style="font-size:.7rem">ภาพ · ${(d.events||0).toLocaleString()} งาน${d.active_users != null ? ' · ' + d.active_users + ' users' : ''}</div>
+      <div class="mt-1" style="color:#9cf">$${(d.cost_usd||0).toFixed(4)} <span class="text-secondary" style="font-size:.7rem">(฿${(d.cost_thb||0).toFixed(2)})</span></div>
+      <div class="text-secondary" style="font-size:.7rem">${(d.tokens_total||0).toLocaleString()} tokens</div>
+    `;
+  }
+  async function loadUsage() {
+    const loading = document.getElementById('usage-loading');
+    const body    = document.getElementById('usage-body');
+    const empty   = document.getElementById('usage-empty');
+    loading.style.display = 'block'; body.style.display = 'none'; empty.style.display = 'none';
+    try {
+      const qs = _usageParams();
+      const r = await fetch(`${_ROOT}/api/usage/summary?${qs}`);
+      const d = await r.json();
+      loading.style.display = 'none';
+      if (!d.row_count) { empty.style.display = 'block'; return; }
+      body.style.display = 'block';
+
+      document.getElementById('usage-card-all').innerHTML   = _fmtCard(d.all_time);
+      document.getElementById('usage-card-year').innerHTML  = _fmtCard(d.this_year);
+      document.getElementById('usage-card-month').innerHTML = _fmtCard(d.this_month);
+
+      // Monthly bars — last 24 months, horizontal bar chart with cost scaled to max
+      const months = (d.by_month || []).slice(0, 24).reverse();
+      const maxAssets = Math.max(1, ...months.map(m => m.assets || 0));
+      const barsEl = document.getElementById('usage-monthly-bars');
+      barsEl.innerHTML = months.map(m => {
+        const w = Math.round(((m.assets || 0) / maxAssets) * 100);
+        return `<div class="d-flex align-items-center gap-2 mb-1" style="font-size:.72rem">
+          <div style="width:60px;color:#aaa">${esc(m.month)}</div>
+          <div style="flex:1;background:#222;border-radius:3px;height:18px;position:relative">
+            <div style="width:${w}%;background:linear-gradient(90deg,#3a6fb0,#6db);height:100%;border-radius:3px"></div>
+            <div style="position:absolute;left:6px;top:0;line-height:18px;color:#fff;font-size:.7rem">
+              ${(m.assets||0).toLocaleString()} ภาพ · $${(m.cost_usd||0).toFixed(4)} · ${m.active_users||0}u
+            </div>
+          </div>
+        </div>`;
+      }).join('') || '<div class="text-secondary">ยังไม่มีข้อมูลรายเดือน</div>';
+
+      // Yearly table
+      document.getElementById('usage-year-tbody').innerHTML = (d.by_year || []).map(y => `
+        <tr>
+          <td>${esc(y.year)}</td>
+          <td class="text-end">${(y.assets||0).toLocaleString()}</td>
+          <td class="text-end" style="color:#aaa">${(y.tokens_total||0).toLocaleString()}</td>
+          <td class="text-end" style="color:#9cf">$${(y.cost_usd||0).toFixed(4)}</td>
+          <td class="text-end" style="color:#9cf">฿${(y.cost_thb||0).toFixed(2)}</td>
+          <td class="text-end">${y.active_users||0}</td>
+          <td class="text-end">${y.events||0}</td>
+        </tr>`).join('') || '<tr><td colspan="7" class="text-center text-secondary py-2">—</td></tr>';
+
+      // Per-user performance ranking
+      document.getElementById('usage-user-tbody').innerHTML = (d.by_user || []).map((u,i) => `
+        <tr>
+          <td class="text-secondary">${i+1}</td>
+          <td style="color:#9cc;word-break:break-all">${esc(u.user)}</td>
+          <td class="text-end">${(u.assets||0).toLocaleString()}</td>
+          <td class="text-end" style="color:#aaa">${(u.tokens_total||0).toLocaleString()}</td>
+          <td class="text-end" style="color:#9cf">$${(u.cost_usd||0).toFixed(4)}</td>
+          <td class="text-end" style="color:#9cf">฿${(u.cost_thb||0).toFixed(2)}</td>
+          <td class="text-end">${u.events||0}</td>
+        </tr>`).join('') || '<tr><td colspan="7" class="text-center text-secondary py-2">—</td></tr>';
+
+      // By folder
+      document.getElementById('usage-folder-tbody').innerHTML = (d.by_folder || []).slice(0, 50).map(f => `
+        <tr>
+          <td style="word-break:break-all">${esc(f.folder)}</td>
+          <td class="text-end">${(f.assets||0).toLocaleString()}</td>
+          <td class="text-end" style="color:#aaa">${(f.tokens_total||0).toLocaleString()}</td>
+          <td class="text-end" style="color:#9cf">$${(f.cost_usd||0).toFixed(4)}</td>
+          <td class="text-end" style="color:#9cf">฿${(f.cost_thb||0).toFixed(2)}</td>
+          <td class="text-end">${f.events||0}</td>
+        </tr>`).join('') || '<tr><td colspan="6" class="text-center text-secondary py-2">—</td></tr>';
+    } catch(e) {
+      loading.style.display = 'none';
       empty.textContent = 'โหลดไม่สำเร็จ: ' + e.message;
       empty.style.display = 'block';
     }

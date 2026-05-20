@@ -56,6 +56,7 @@ class BulkReanalyzeRequest(BaseModel):
 import secrets as _py_secrets
 
 from app.audit import log as audit_log, get_current_user
+from app import usage as usage_history
 from app.config import settings
 from app.services import google_auth as _google_auth
 from app.controllers.gemini_controller import run_gemini_batch, _analyze_one as _gemini_analyze
@@ -74,6 +75,7 @@ from app.models.asset import Asset
 from app.models.audit_log import AuditLog
 from app.models.mimir_option import MimirOption
 from app.models.person import Person
+from app.models.usage_history import UsageHistory
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -406,14 +408,36 @@ async def list_assets(
 async def clear_assets(db: Session = Depends(get_db)):
     if _running["fetch"] or _running["batch"]:
         raise HTTPException(status_code=409, detail="Cannot clear while a task is running")
-    # Auto-save report snapshot before deleting so history is never lost
-    if db.query(Asset).filter(Asset.status == "done").count() > 0:
+    # Snapshot usage stats BEFORE deleting so monthly/yearly history is never lost.
+    # The assets table is wiped, but usage_history survives Clear DB by design.
+    from sqlalchemy import func
+    done_q = db.query(
+        func.count(Asset.item_id).label("n"),
+        func.sum(Asset.tokens_input).label("ti"),
+        func.sum(Asset.tokens_output).label("to"),
+    ).filter(Asset.status == "done").first()
+    done_n  = int(done_q.n or 0)
+    done_ti = float(done_q.ti or 0)
+    done_to = float(done_q.to or 0)
+    if done_n > 0:
+        price_in, price_out = _get_pricing()
+        cost = (done_ti / 1e6) * price_in + (done_to / 1e6) * price_out
+        usage_history.record(
+            "clear_db_snapshot",
+            folder_label="all",
+            assets_count=done_n,
+            tokens_input=done_ti,
+            tokens_output=done_to,
+            cost_usd=cost,
+            notes="Snapshot taken just before Clear DB wiped the assets table",
+        )
         await _save_report_snapshot(db)
     count = db.query(Asset).count()
     db.query(Asset).delete()
     db.commit()
     audit_log("clear_db", target="all", message=f"Cleared {count} assets",
-              details={"count": count})
+              details={"count": count, "done_snapshot": done_n,
+                       "tokens_in": int(done_ti), "tokens_out": int(done_to)})
     # Also clear image cache — no point keeping files for deleted assets
     cache_deleted = clear_image_cache()
     return {"deleted": count, "cache_cleared": cache_deleted}
@@ -1359,6 +1383,10 @@ async def batch_stream():
     _cancel["batch"] = False               # reset cancel flag for this run
     _batch_started_at = None               # stream connected → cancel watchdog
     _running["batch"] = True               # mark running so /api/stats reflects it
+    # Snapshot the wall-clock + user at stream open so the end-of-batch
+    # usage record reflects exactly this batch's work + who triggered it.
+    batch_user     = get_current_user()
+    batch_start_dt = datetime.utcnow()
 
     async def generate():
         try:
@@ -1370,6 +1398,31 @@ async def batch_stream():
                         fname = await _save_report_snapshot(db)
                         if fname:
                             event["report_saved"] = fname
+                        # Persistent usage record — survives Clear DB by design.
+                        from sqlalchemy import func
+                        stats = db.query(
+                            func.count(Asset.item_id),
+                            func.sum(Asset.tokens_input),
+                            func.sum(Asset.tokens_output),
+                        ).filter(Asset.status == "done",
+                                 Asset.processed_at >= batch_start_dt).first()
+                        n  = int(stats[0] or 0)
+                        ti = float(stats[1] or 0)
+                        to = float(stats[2] or 0)
+                        if n > 0:
+                            price_in, price_out = _get_pricing()
+                            cost = (ti / 1e6) * price_in + (to / 1e6) * price_out
+                            duration = int((datetime.utcnow() - batch_start_dt).total_seconds())
+                            usage_history.record(
+                                "batch_done",
+                                folder_label=",".join(album_keys) or "all",
+                                assets_count=n,
+                                tokens_input=ti,
+                                tokens_output=to,
+                                cost_usd=cost,
+                                duration_sec=duration,
+                                user=batch_user,
+                            )
                     finally:
                         db.close()
                 yield f"data: {json.dumps(event)}\n\n"
@@ -1674,6 +1727,242 @@ async def audit_log_user_summary(db: Session = Depends(get_db)):
     return {"users": items, "user_count": len(items)}
 
 
+# ── API: Usage history (data-driven monthly/yearly reports) ───────────────────
+
+def _usage_query(db: Session, frm: str = "", to: str = "",
+                 user: str = "", event: str = ""):
+    """Shared filter builder for usage_history read endpoints. Date inputs
+    are inclusive `YYYY-MM-DD` strings (UTC)."""
+    q = db.query(UsageHistory)
+    if frm:
+        try:
+            q = q.filter(UsageHistory.timestamp >= datetime.strptime(frm, "%Y-%m-%d"))
+        except ValueError:
+            pass
+    if to:
+        try:
+            # inclusive upper bound — go to end of day
+            upper = datetime.strptime(to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            q = q.filter(UsageHistory.timestamp <= upper)
+        except ValueError:
+            pass
+    if user:
+        q = q.filter(UsageHistory.user.contains(user))
+    if event:
+        q = q.filter(UsageHistory.event == event)
+    return q
+
+
+@router.get("/api/usage")
+async def list_usage(
+    frm: str = "",
+    to: str = "",
+    user: str = "",
+    event: str = "",
+    page: int = 1,
+    per_page: int = 100,
+    db: Session = Depends(get_db),
+):
+    """List usage_history rows — newest first. Use filters to narrow by date
+    range, user, or event type (batch_done / push_all_done / clear_db_snapshot)."""
+    q = _usage_query(db, frm, to, user, event)
+    total = q.count()
+    rows = (q.order_by(UsageHistory.id.desc())
+              .offset(max(0, (page - 1) * per_page))
+              .limit(min(max(per_page, 1), 1000))
+              .all())
+    return {
+        "total":    total,
+        "page":     page,
+        "per_page": per_page,
+        "items":    [r.to_dict() for r in rows],
+    }
+
+
+@router.get("/api/usage/summary")
+async def usage_summary(
+    frm: str = "",
+    to: str = "",
+    db: Session = Depends(get_db),
+):
+    """Aggregated usage report — all-time, by month, by year, by user, by folder.
+    This is the data-driven foundation for performance dashboards."""
+    rows = _usage_query(db, frm, to).all()
+
+    def _empty():
+        return {"assets": 0, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "events": 0}
+
+    all_time = _empty()
+    by_month: dict = {}   # "2026-05" → totals
+    by_year:  dict = {}   # "2026"    → totals
+    by_user:  dict = {}   # email     → totals
+    by_user_month: dict = {}  # (user, "2026-05") → totals
+    by_folder: dict = {}  # folder_label → totals
+    by_event: dict = {}   # event → totals
+    months_users: dict = {}  # "2026-05" → set(users)  for active-user counts
+    years_users:  dict = {}
+
+    def _add(bucket: dict, key, ti, to, cost, n):
+        b = bucket.setdefault(key, _empty())
+        b["assets"]    += n
+        b["tokens_in"] += int(ti)
+        b["tokens_out"]+= int(to)
+        b["cost_usd"]  += cost
+        b["events"]    += 1
+
+    for r in rows:
+        ts = r.timestamp
+        if not ts:
+            continue
+        month = ts.strftime("%Y-%m")
+        year  = ts.strftime("%Y")
+        ti = r.tokens_input or 0
+        to = r.tokens_output or 0
+        cost = r.cost_usd or 0.0
+        n = r.assets_count or 0
+        u = r.user or "(unknown)"
+        f = r.folder_label or "—"
+
+        # all-time
+        all_time["assets"]    += n
+        all_time["tokens_in"] += int(ti)
+        all_time["tokens_out"]+= int(to)
+        all_time["cost_usd"]  += cost
+        all_time["events"]    += 1
+
+        _add(by_month, month, ti, to, cost, n)
+        _add(by_year,  year,  ti, to, cost, n)
+        _add(by_user,  u,     ti, to, cost, n)
+        _add(by_user_month, f"{u}|{month}", ti, to, cost, n)
+        _add(by_folder, f,    ti, to, cost, n)
+        _add(by_event, r.event or "—", ti, to, cost, n)
+        months_users.setdefault(month, set()).add(u)
+        years_users.setdefault(year,   set()).add(u)
+
+    def _fmt(d: dict, key_name: str, key, extra: dict = None):
+        return {
+            key_name:       key,
+            "assets":       d["assets"],
+            "tokens_in":    d["tokens_in"],
+            "tokens_out":   d["tokens_out"],
+            "tokens_total": d["tokens_in"] + d["tokens_out"],
+            "cost_usd":     round(d["cost_usd"], 5),
+            "cost_thb":     round(d["cost_usd"] * 34, 3),
+            "events":       d["events"],
+            **(extra or {}),
+        }
+
+    months_list = [
+        _fmt(by_month[m], "month", m, {"active_users": len(months_users.get(m, set()))})
+        for m in sorted(by_month.keys(), reverse=True)
+    ]
+    years_list = [
+        _fmt(by_year[y], "year", y, {"active_users": len(years_users.get(y, set()))})
+        for y in sorted(by_year.keys(), reverse=True)
+    ]
+    users_list = [_fmt(by_user[u], "user", u) for u in by_user.keys()]
+    users_list.sort(key=lambda x: x["assets"], reverse=True)
+
+    folders_list = [_fmt(by_folder[f], "folder", f) for f in by_folder.keys()]
+    folders_list.sort(key=lambda x: x["assets"], reverse=True)
+
+    user_month_list = []
+    for k, d in by_user_month.items():
+        u, m = k.split("|", 1)
+        user_month_list.append(_fmt(d, "month", m, {"user": u}))
+    user_month_list.sort(key=lambda x: (x["month"], -x["assets"]), reverse=True)
+
+    today = datetime.utcnow()
+    this_month_key = today.strftime("%Y-%m")
+    this_year_key  = today.strftime("%Y")
+
+    return {
+        "generated_at": today.isoformat(),
+        "filter":       {"from": frm or None, "to": to or None},
+        "all_time":     _fmt(all_time, "scope", "all_time"),
+        "this_month":   _fmt(by_month.get(this_month_key, _empty()), "month", this_month_key,
+                             {"active_users": len(months_users.get(this_month_key, set()))}),
+        "this_year":    _fmt(by_year.get(this_year_key, _empty()), "year", this_year_key,
+                             {"active_users": len(years_users.get(this_year_key, set()))}),
+        "by_month":     months_list,
+        "by_year":      years_list,
+        "by_user":      users_list,
+        "by_user_month": user_month_list,
+        "by_folder":    folders_list,
+        "by_event":     [_fmt(by_event[e], "event", e) for e in by_event.keys()],
+        "row_count":    len(rows),
+    }
+
+
+@router.get("/api/usage/export.csv")
+async def export_usage_csv(
+    frm: str = "",
+    to: str = "",
+    user: str = "",
+    event: str = "",
+    group: str = "",
+    db: Session = Depends(get_db),
+):
+    """Export usage history as CSV. `group=raw|month|year|user|folder` controls
+    granularity (default raw — one row per event)."""
+    import csv, io
+    from fastapi.responses import StreamingResponse as _SR
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+
+    if group in ("month", "year", "user", "folder"):
+        # Aggregated view — reuse summary builder
+        summary = await usage_summary(frm=frm, to=to, db=db)
+        if group == "month":
+            w.writerow(["Month", "Assets", "Tokens In", "Tokens Out", "Cost USD", "Cost THB", "Active Users", "Events"])
+            for r in summary["by_month"]:
+                w.writerow([r["month"], r["assets"], r["tokens_in"], r["tokens_out"],
+                            r["cost_usd"], r["cost_thb"], r["active_users"], r["events"]])
+        elif group == "year":
+            w.writerow(["Year", "Assets", "Tokens In", "Tokens Out", "Cost USD", "Cost THB", "Active Users", "Events"])
+            for r in summary["by_year"]:
+                w.writerow([r["year"], r["assets"], r["tokens_in"], r["tokens_out"],
+                            r["cost_usd"], r["cost_thb"], r["active_users"], r["events"]])
+        elif group == "user":
+            w.writerow(["User", "Assets", "Tokens In", "Tokens Out", "Cost USD", "Cost THB", "Events"])
+            for r in summary["by_user"]:
+                w.writerow([r["user"], r["assets"], r["tokens_in"], r["tokens_out"],
+                            r["cost_usd"], r["cost_thb"], r["events"]])
+        elif group == "folder":
+            w.writerow(["Folder", "Assets", "Tokens In", "Tokens Out", "Cost USD", "Cost THB", "Events"])
+            for r in summary["by_folder"]:
+                w.writerow([r["folder"], r["assets"], r["tokens_in"], r["tokens_out"],
+                            r["cost_usd"], r["cost_thb"], r["events"]])
+        suffix = f"_{group}"
+    else:
+        rows = (_usage_query(db, frm, to, user, event)
+                .order_by(UsageHistory.id.desc())
+                .limit(100000).all())
+        w.writerow(["Timestamp (UTC)", "User", "Event", "Folder", "Assets",
+                    "Tokens In", "Tokens Out", "Cost USD", "Cost THB",
+                    "Gemini Model", "Duration (sec)", "Notes"])
+        for r in rows:
+            d = r.to_dict()
+            w.writerow([
+                r.timestamp.strftime("%Y-%m-%d %H:%M:%S") if r.timestamp else "",
+                d["user"], d["event"], d["folder_label"], d["assets_count"],
+                d["tokens_input"], d["tokens_output"],
+                d["cost_usd"], d["cost_thb"],
+                d["gemini_model"], d["duration_sec"],
+                (d["notes"] or "").replace("\n", " ").replace("\r", " "),
+            ])
+        suffix = ""
+
+    buf.seek(0)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return _SR(
+        iter([buf.getvalue().encode("utf-8-sig")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=usage{suffix}_{ts}.csv"},
+    )
+
+
 @router.post("/api/assets/{item_id}/push")
 async def push_one(item_id: str):
     result = await push_metadata_to_mimir(item_id)
@@ -1704,6 +1993,7 @@ async def push_all(db: Session = Depends(get_db)):
     # Capture the user now — the streaming generator below runs the per-asset
     # audit calls in a context where reading the request session is unreliable.
     who = get_current_user()
+    push_start_dt = datetime.utcnow()
     audit_log("push_all_start", target="all", message=f"Push {total} done assets",
               details={"count": total}, user=who)
 
@@ -1763,6 +2053,16 @@ async def push_all(db: Session = Depends(get_db)):
                       message=f"Push {total} done assets → {ok_count} ok, {errors} error",
                       details={"ok": ok_count, "errors": errors, "total": total},
                       user=who)
+            # Persistent usage record (no Gemini cost — push doesn't call AI).
+            usage_history.record(
+                "push_all_done",
+                folder_label="all",
+                assets_count=ok_count,
+                cost_usd=0.0,
+                duration_sec=int((datetime.utcnow() - push_start_dt).total_seconds()),
+                notes=f"{ok_count} pushed ok, {errors} error of {total}",
+                user=who,
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

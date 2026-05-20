@@ -20,6 +20,7 @@ from app.database import Base, engine, run_migrations
 from app.models.person import Person  # noqa: F401 — register with Base
 from app.models.audit_log import AuditLog  # noqa: F401 — register with Base
 from app.models.mimir_option import MimirOption  # noqa: F401 — register with Base
+from app.models.usage_history import UsageHistory  # noqa: F401 — register with Base
 from app.services import google_auth as _google_auth
 from app.views.routes import router
 

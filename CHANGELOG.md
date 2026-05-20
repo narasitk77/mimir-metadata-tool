@@ -14,6 +14,20 @@
 
 ## 2026-05-17
 ### Added
+- **Usage history — รายงานรายเดือน/รายปี/ราย user (data-driven)** — ตาราง
+  `usage_history` แยกจาก `assets` เก็บ snapshot ทุกครั้งที่ batch จบ / push_all
+  จบ / กด Clear DB → **Clear DB กี่รอบก็ไม่หาย**
+  - บันทึกอัตโนมัติ 3 จุด: ตอน batch เสร็จ, push_all เสร็จ, ก่อน clear (กันลืม)
+  - คอลัมน์: timestamp, user, event, folder, assets_count, tokens, cost_usd,
+    gemini_model, duration_sec — เก็บราคา/โมเดลตอนนั้นด้วย กันโมเดลเปลี่ยนทีหลัง
+  - `GET /api/usage` — list มี filter วันที่/user/event
+  - `GET /api/usage/summary` — สรุป all-time / this_month / this_year / by_month /
+    by_year / by_user / by_folder / by_event / by_user_month
+  - `GET /api/usage/export.csv?group=raw|month|year|user|folder` — โหลดเป็น CSV
+    (เปิด Excel ทำกราฟต่อได้)
+  - UI: ปุ่ม **Usage** บน toolbar เปิด modal โชว์การ์ดสรุป (ทั้งหมด/ปีนี้/เดือนนี้) +
+    bar chart รายเดือน 24 เดือน + ตารางรายปี + **performance ranking ราย user** +
+    ราย folder + ปุ่ม Export CSV 4 แบบ + ตัวกรองวันที่ + shortcut (30 วัน, 90 วัน, ปีนี้)
 - **Navbar แสดงชื่อผู้ใช้ที่ login** + ปุ่ม logout (แทนที่จะแสดง email ดิบ)
 - **Audit Log viewer** — ปุ่ม "Audit Log" บน toolbar เปิด modal ดูประวัติทุก
   action filter ตาม action/status ได้ — ไม่ต้อง curl `/api/audit-log` เอง
