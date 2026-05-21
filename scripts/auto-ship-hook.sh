@@ -34,6 +34,12 @@ BODY="Stop-hook safety net (ship.sh was not run manually this turn). Files: ${FI
 
 # ship.sh runs the smoke test (+ pre-commit hook re-runs it). If verification
 # fails, ship.sh exits non-zero and the changes are left for manual review —
-# we still exit 0 here so Claude is never blocked.
-"$REPO/scripts/ship.sh" "$MSG" "$BODY" >/tmp/mimir-auto-ship.log 2>&1 || true
+# we still exit 0 here so Claude is never blocked. A systemMessage on stdout
+# surfaces in the UI so you know the safety net fired (it's silent when clean).
+if "$REPO/scripts/ship.sh" "$MSG" "$BODY" >/tmp/mimir-auto-ship.log 2>&1; then
+  SHA="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)"
+  printf '{"systemMessage":"🚢 auto-ship safety net: %s file(s) committed + pushed (%s) — ship.sh was not run manually this turn"}\n' "$COUNT" "$SHA"
+else
+  printf '{"systemMessage":"⚠ auto-ship: smoke test rejected the changes — left UNCOMMITTED for review. See /tmp/mimir-auto-ship.log"}\n'
+fi
 exit 0

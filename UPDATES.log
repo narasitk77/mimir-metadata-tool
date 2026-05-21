@@ -13,3 +13,4 @@
 2026-05-21 08:21:03 UTC  chore: add ship.sh — auto smoke-test + log + commit + push on each feature
 2026-05-21 08:35:36 UTC  chore: git pre-commit hook — auto-run smoke test on every commit
 2026-05-21 09:19:10 UTC  chore: add Stop-hook auto-ship safety net script
+2026-05-21 09:22:56 UTC  chore: auto-ship hook surfaces a systemMessage when it fires
