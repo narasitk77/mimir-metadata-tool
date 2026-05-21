@@ -25,37 +25,9 @@ if [[ -z "$MSG" ]]; then
   exit 1
 fi
 
-# ── 1. Smoke test ─────────────────────────────────────────────────────────────
+# ── 1. Smoke test (shared with the pre-commit hook) ──────────────────────────
 echo "▶ smoke test…"
-PYBIN=".venv/bin/python"
-[[ -x "$PYBIN" ]] || PYBIN="python3"
-"$PYBIN" - <<'PY' || { echo "✗ smoke test FAILED — nothing shipped." >&2; exit 1; }
-import ast, glob, os, sys
-
-# (a) syntax-check every module
-n = 0
-for f in glob.glob("app/**/*.py", recursive=True):
-    try:
-        ast.parse(open(f, encoding="utf-8").read())
-        n += 1
-    except SyntaxError as e:
-        print(f"  SYNTAX ERROR in {f}: {e}", file=sys.stderr)
-        sys.exit(1)
-print(f"  syntax OK ({n} files)")
-
-# (b) import the app — catches missing names, bad imports, circular deps.
-#     Best-effort: skip cleanly if 3rd-party deps aren't installed locally.
-os.environ.setdefault("DATABASE_URL", "sqlite:///./_ship_smoke.db")
-try:
-    import importlib
-    importlib.import_module("app.main")
-    print("  import app.main OK")
-except ImportError as e:
-    print(f"  (import check skipped — dependency not installed: {e})")
-finally:
-    if os.path.exists("./_ship_smoke.db"):
-        os.remove("./_ship_smoke.db")
-PY
+"$(dirname "$0")/smoke-test.sh" || { echo "✗ smoke test FAILED — nothing shipped." >&2; exit 1; }
 
 # ── 2. Bail if there's nothing to ship ────────────────────────────────────────
 if [[ -z "$(git status --porcelain)" ]]; then

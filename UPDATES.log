@@ -11,3 +11,4 @@
 2026-05-20 10:36:57 UTC  feat: automation — Mimir watch folders + 15-min scheduler
 2026-05-20 12:16:15 UTC  feat: automation safety nets — watchdog + live cost visibility
 2026-05-21 08:21:03 UTC  chore: add ship.sh — auto smoke-test + log + commit + push on each feature
+2026-05-21 08:35:36 UTC  chore: git pre-commit hook — auto-run smoke test on every commit

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#
+# pre-commit — runs automatically before EVERY `git commit` (including the one
+# inside ship.sh). Blocks the commit if the smoke test fails, so broken code
+# (syntax / import errors) can never be committed — no matter how you commit.
+#
+# Activated by: git config core.hooksPath scripts/git-hooks
+#               (run scripts/setup-hooks.sh once after cloning)
+#
+echo "▶ pre-commit smoke test…"
+ROOT="$(git rev-parse --show-toplevel)"
+if ! "$ROOT/scripts/smoke-test.sh"; then
+  echo "✗ commit blocked — smoke test failed. Fix the error above, then commit again." >&2
+  exit 1
+fi
