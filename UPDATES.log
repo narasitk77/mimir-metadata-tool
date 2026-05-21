@@ -12,3 +12,4 @@
 2026-05-20 12:16:15 UTC  feat: automation safety nets — watchdog + live cost visibility
 2026-05-21 08:21:03 UTC  chore: add ship.sh — auto smoke-test + log + commit + push on each feature
 2026-05-21 08:35:36 UTC  chore: git pre-commit hook — auto-run smoke test on every commit
+2026-05-21 09:19:10 UTC  chore: add Stop-hook auto-ship safety net script
