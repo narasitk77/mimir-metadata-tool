@@ -1,0 +1,13 @@
+# Update log — appended automatically by scripts/ship.sh (one line per shipped feature).
+# Format:  YYYY-MM-DD HH:MM:SS UTC  <message>
+# Curated prose lives in CHANGELOG.md; this file is the raw, machine-skimmable trail.
+# ---------------------------------------------------------------------------------
+2026-05-17 06:47:16 UTC  feat: navbar user name + Audit Log viewer modal
+2026-05-17 07:23:37 UTC  feat: Mimir option auto-discovery + editorial_categories single-value fix
+2026-05-17 07:27:47 UTC  feat: health dashboard — Mimir / Gemini / Database status
+2026-05-17 07:31:07 UTC  docs: changelog 2026-05-17 — navbar, audit UI, health, auto-discovery
+2026-05-17 08:17:58 UTC  feat: audit log per-user tracking + CSV export
+2026-05-20 08:44:49 UTC  feat: usage history — monthly/yearly/per-user performance reports
+2026-05-20 10:36:57 UTC  feat: automation — Mimir watch folders + 15-min scheduler
+2026-05-20 12:16:15 UTC  feat: automation safety nets — watchdog + live cost visibility
+2026-05-21 08:21:03 UTC  chore: add ship.sh — auto smoke-test + log + commit + push on each feature
