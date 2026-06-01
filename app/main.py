@@ -92,8 +92,8 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         try:
             sess_user = request.session.get("user") or {}
             _audit.set_current_user(sess_user.get("email", ""))
-        except Exception:
-            pass
+        except Exception as _e:
+            _log.debug(f"Could not set audit user from session: {_e}")
         if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
         user = request.session.get("user")

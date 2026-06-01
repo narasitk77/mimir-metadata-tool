@@ -472,6 +472,9 @@ def get_daily_usage() -> dict:
             Asset.status == "done",
         ).first()
         return {"requests": row.requests or 0, "tokens": int(row.tokens or 0)}
+    except Exception as e:
+        logger.warning(f"get_daily_usage DB error: {e}")
+        return {"requests": 0, "tokens": 0}
     finally:
         db.close()
 
