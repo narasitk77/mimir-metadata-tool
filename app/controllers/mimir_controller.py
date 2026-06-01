@@ -200,9 +200,14 @@ _MIMIR_UUID_FIELDS: dict[str, tuple] = {
 
 
 def _folder_name(item: dict) -> str:
-    """Extract folder display name from a Mimir search result item."""
+    """Extract folder display name from a Mimir search result item.
+
+    Mimir folder objects use `name` field; media items use `originalFileName`
+    or `title`. Check `name` first so subfolder discovery works correctly.
+    """
     return (
-        item.get("originalFileName")
+        item.get("name")
+        or item.get("originalFileName")
         or item.get("title")
         or item.get("metadata", {}).get("formData", {}).get("title", "")
         or ""
@@ -288,12 +293,28 @@ def extract_folder_id(folder_url: str) -> str:
     raise ValueError(f"ไม่พบ Folder ID ใน: {folder_url}")
 
 
-async def fetch_all_items(folder_id: Optional[str] = None, context_text: str = "") -> AsyncGenerator[dict, None]:
+_HIRES_PATH_SEGS  = {"hires", "hi-res", "hi_res", "highres", "high res", "high_res"}
+_FB_PATH_SEGS     = {"fb", "facebook", "fb-size", "fbsize", "fb_size"}
+
+
+async def fetch_all_items(
+    folder_id: Optional[str] = None,
+    context_text: str = "",
+    subfolder_filter: Optional[str] = None,
+) -> AsyncGenerator[dict, None]:
     """
     Fetch all items from Mimir folder and upsert into DB.
     Yields progress dicts for SSE streaming.
+
     folder_id: UUID โดยตรง หรือ None เพื่อใช้ค่าจาก config
     context_text: optional folder-level context for AI analysis
+    subfolder_filter:
+        None / "all"      → no filtering (default behaviour)
+        "hires_only"      → include only items whose parent folder name is in
+                            HIRES_PATH_SEGS or items directly in the event folder
+                            (i.e. not in any recognised sub-type folder)
+        "no_fb"           → exclude items whose parent folder name is in FB_PATH_SEGS
+        "hires_no_fb"     → hires_only + also explicitly exclude FB paths
     """
     resolved_folder_id = folder_id or settings.FOLDER_ID
     if not resolved_folder_id:
@@ -342,9 +363,14 @@ async def fetch_all_items(folder_id: Optional[str] = None, context_text: str = "
             _SKIP_EXTS = (".xml", ".bup", ".inf", ".smi", ".xmp",
                           ".idx", ".cif", ".sif", ".lut")
 
+            # Pre-compute subfolder_filter flags once per page (not per item)
+            _do_hires_only = subfolder_filter in ("hires_only", "hires_no_fb")
+            _do_no_fb      = subfolder_filter in ("no_fb", "hires_no_fb")
+
             db = SessionLocal()
             try:
                 skipped_meta = 0
+                skipped_filter = 0
                 for item in items:
                     ingest_path_lower = (item.get("ingestSourceFullPath", "") or "").lower()
                     fname_lower = (item.get("originalFileName", "") or "").lower()
@@ -356,6 +382,29 @@ async def fetch_all_items(folder_id: Optional[str] = None, context_text: str = "
                     if any(fname_lower.endswith(ext) for ext in _SKIP_EXTS):
                         skipped_meta += 1
                         continue
+
+                    # ── subfolder_filter ──────────────────────────────────────
+                    if _do_hires_only or _do_no_fb:
+                        # Determine parent folder name from ingest path
+                        path_parts = ingest_path_lower.replace("\\", "/").split("/")
+                        parent_seg = path_parts[-2].strip() if len(path_parts) >= 2 else ""
+                        is_hires = parent_seg in _HIRES_PATH_SEGS
+                        is_fb    = parent_seg in _FB_PATH_SEGS
+                        if _do_no_fb and is_fb:
+                            skipped_filter += 1
+                            continue
+                        if _do_hires_only and not is_hires:
+                            # Skip non-hires sub-type folders; only include explicit hires
+                            # and items sitting directly in an event folder (no recognised sub-type)
+                            _all_known_subtypes = _HIRES_PATH_SEGS | _FB_PATH_SEGS | {
+                                "logo", "raw", "proxy", "proxies",
+                                "social", "web", "thumb", "thumbnail",
+                                "small", "medium", "large",
+                            }
+                            if parent_seg in _all_known_subtypes:
+                                skipped_filter += 1
+                                continue
+                    # ─────────────────────────────────────────────────────────
 
                     fd = item.get("metadata", {}).get("formData", {})
                     tfd = item.get("technicalMetadata", {}).get("formData", {})
@@ -388,6 +437,8 @@ async def fetch_all_items(folder_id: Optional[str] = None, context_text: str = "
                 db.commit()
                 if skipped_meta:
                     logger.info(f"Skipped {skipped_meta} metadata/thumbnail files")
+                if skipped_filter:
+                    logger.info(f"Skipped {skipped_filter} items by subfolder_filter={subfolder_filter!r}")
             finally:
                 db.close()
 
