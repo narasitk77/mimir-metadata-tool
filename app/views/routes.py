@@ -2162,6 +2162,17 @@ async def automation_run_now():
     return _sched.status()
 
 
+@router.post("/api/automation/sweep-now")
+async def automation_sweep_now():
+    """Trigger the daily sweep immediately — polls all folders + processes ALL pending items.
+    Useful for on-demand full runs or testing the daily sweep before the scheduled time."""
+    from app import scheduler as _sched
+    if _sched.is_paused():
+        raise HTTPException(status_code=409, detail="Automation is paused — resume first")
+    await _sched.daily_sweep()
+    return _sched.status()
+
+
 @router.post("/api/assets/{item_id}/push")
 async def push_one(item_id: str):
     result = await push_metadata_to_mimir(item_id)

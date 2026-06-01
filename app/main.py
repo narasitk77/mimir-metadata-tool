@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
     # items, auto-fetches them as pending, then auto-batches with Gemini.
     # No-op until the user adds a watch folder via the Automation UI.
     try:
-        _scheduler.start(interval_minutes=15)
+        _scheduler.start(interval_minutes=settings.AUTOMATION_POLL_INTERVAL_MINUTES)
     except Exception as e:
         _log.warning(f"Automation scheduler failed to start: {e}")
     try:

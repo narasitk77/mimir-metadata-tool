@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     GEMINI_DELAY_MS: int = 6000  # 6s = 10 req/min, right at free-tier 10 RPM cap
     BATCH_SIZE: int = 20
 
+    # Automation scheduler
+    AUTOMATION_POLL_INTERVAL_MINUTES: int = 15   # how often to poll watch folders
+    AUTOMATION_DAILY_HOUR: int = 2               # local UTC hour for daily sweep (0-23)
+    AUTOMATION_DAILY_MINUTE: int = 0             # minute offset for daily sweep
+
     # Gemini Free Tier limits (gemini-2.5-flash)
     FREE_TIER_RPD: int = 500        # requests per day
     FREE_TIER_RPM: int = 10         # requests per minute

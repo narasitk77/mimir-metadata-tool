@@ -2,14 +2,15 @@
 
 Design:
   • APScheduler tick every N minutes (default 15) — `poll_all_folders()`
-  • Each enabled WatchFolder → call existing `fetch_all_items()` which upserts
-    Asset rows. Count delta = number of new pendings added.
-  • If any new pending appeared AND no manual batch is running → kick off
-    `run_batch_internal()` to analyze them with Gemini.
-  • Audit log writes on every tick (heartbeat) + on every fetch result + on
-    every auto-batch — so an absence of ticks is itself a visible signal.
-  • Global kill-switch (`set_paused(True)`) for emergency stop without
-    disabling each folder one by one.
+    - Each enabled WatchFolder → call `fetch_all_items()` which upserts Asset rows.
+    - If any NEW pending appeared OR existing pending items remain → auto-batch.
+    - This ensures items stuck as `pending` from a previous incomplete run are
+      always retried on the next tick, not just when fresh items arrive.
+  • Daily sweep job (configurable UTC hour, default 2 AM) — `daily_sweep()`
+    - Polls all folders unconditionally, then forces a full Gemini batch on
+      ALL pending items, guaranteeing daily completeness.
+  • Audit log writes on every tick (heartbeat) + every fetch + every batch.
+  • Global kill-switch (`set_paused(True)`) for emergency stop.
 
 Safety: NO auto-push. Items move through pending → done. A human still
 clicks "Push All" in the UI.
@@ -22,6 +23,7 @@ from datetime import datetime
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.audit import log as audit_log, set_current_user
@@ -228,16 +230,26 @@ async def poll_all_folders() -> None:
                       details={"folder_id": folder_id, "label": label, "error": err},
                       user=SCHEDULER_USER)
 
+    # Count pending items in DB (includes backlog from previous incomplete runs)
+    db_pending = SessionLocal()
+    try:
+        pending_count = db_pending.query(Asset).filter(Asset.status == "pending").count()
+    finally:
+        db_pending.close()
+
     audit_log("scheduler_tick", target="poll",
-              message=f"Polled {len(folder_data)} folder(s) → {total_new} new ({folders_ok} ok, {folders_err} err)",
+              message=(f"Polled {len(folder_data)} folder(s) → {total_new} new, "
+                       f"{pending_count} pending total ({folders_ok} ok, {folders_err} err)"),
               details={"folders": len(folder_data), "new": total_new,
+                       "pending": pending_count,
                        "ok": folders_ok, "err": folders_err},
               user=SCHEDULER_USER)
     _last_tick_summary = {
-        "at":         _last_heartbeat_at.isoformat(),
-        "folders":    len(folder_data),
-        "new":        total_new,
-        "folders_ok": folders_ok,
+        "at":          _last_heartbeat_at.isoformat(),
+        "folders":     len(folder_data),
+        "new":         total_new,
+        "pending":     pending_count,
+        "folders_ok":  folders_ok,
         "folders_err": folders_err,
     }
 
@@ -254,8 +266,10 @@ async def poll_all_folders() -> None:
                            "warn_usd": DAILY_WARN_USD},
                   user=SCHEDULER_USER)
 
-    # Kick off auto-batch if anything new + no manual batch in flight.
-    if total_new > 0:
+    # Kick off auto-batch when there are NEW items OR a pending backlog from a
+    # previous incomplete run.  Previously this only fired on total_new > 0,
+    # which meant stuck-pending items were never retried until fresh items arrived.
+    if total_new > 0 or pending_count > 0:
         # Lazy import to avoid circular: routes imports usage which imports audit.
         from app.views.routes import run_batch_internal, _running
         if _running.get("batch"):
@@ -273,11 +287,65 @@ async def poll_all_folders() -> None:
                       message=str(e)[:500], user=SCHEDULER_USER)
 
 
+async def daily_sweep() -> None:
+    """Daily guaranteed-completeness sweep.
+
+    Runs at a configured UTC hour (AUTOMATION_DAILY_HOUR, default 2 AM).
+    Polls ALL enabled watch folders for new items, then forces a full Gemini
+    batch on every pending asset regardless of whether new items were found.
+    This catches:
+      - New files added during the day that missed the interval poll
+      - Assets stuck as 'pending' from rate-limit interruptions or crashes
+    """
+    if _paused:
+        _log.info("Daily sweep skipped — automation paused")
+        return
+
+    set_current_user(SCHEDULER_USER)
+    audit_log("daily_sweep_start", target="all",
+              message="Daily sweep starting — polling all folders + full batch",
+              user=SCHEDULER_USER)
+
+    await poll_all_folders()
+
+    db_check = SessionLocal()
+    try:
+        pending_count = db_check.query(Asset).filter(Asset.status == "pending").count()
+    finally:
+        db_check.close()
+
+    if pending_count == 0:
+        audit_log("daily_sweep_done", target="all",
+                  message="Daily sweep: no pending items — nothing to process",
+                  user=SCHEDULER_USER)
+        return
+
+    from app.views.routes import run_batch_internal, _running
+    if _running.get("batch"):
+        audit_log("daily_sweep_done", target="all", status="skipped",
+                  message=f"Daily sweep: {pending_count} pending but batch already running",
+                  user=SCHEDULER_USER)
+        return
+
+    try:
+        result = await run_batch_internal(user=SCHEDULER_USER, source="daily_sweep")
+        audit_log("daily_sweep_done", target="all", status="ok",
+                  message=f"Daily sweep complete: {pending_count} pending processed — {result}",
+                  details=result, user=SCHEDULER_USER)
+    except Exception as e:
+        audit_log("daily_sweep_done", target="all", status="error",
+                  message=f"Daily sweep batch error: {str(e)[:500]}",
+                  user=SCHEDULER_USER)
+
+
 def start(interval_minutes: int = 15) -> None:
     global _scheduler, _interval_minutes
     if _scheduler is not None:
         return
     _interval_minutes = max(1, int(interval_minutes))
+    daily_hour   = int(os.getenv("AUTOMATION_DAILY_HOUR",   "2"))
+    daily_minute = int(os.getenv("AUTOMATION_DAILY_MINUTE", "0"))
+
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(
         poll_all_folders,
@@ -287,8 +355,18 @@ def start(interval_minutes: int = 15) -> None:
         coalesce=True,     # if missed ticks pile up, just run one catch-up
         next_run_time=datetime.utcnow(),  # run once at startup so first tick isn't delayed
     )
+    _scheduler.add_job(
+        daily_sweep,
+        CronTrigger(hour=daily_hour, minute=daily_minute),
+        id="daily_sweep",
+        max_instances=1,
+        coalesce=True,
+    )
     _scheduler.start()
-    _log.info(f"Automation scheduler started — polling every {_interval_minutes} min")
+    _log.info(
+        f"Automation scheduler started — polling every {_interval_minutes} min, "
+        f"daily sweep at {daily_hour:02d}:{daily_minute:02d} UTC"
+    )
 
 
 def stop() -> None:
