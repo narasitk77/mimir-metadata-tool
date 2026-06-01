@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     AUTOMATION_DAILY_HOUR: int = 2               # local UTC hour for daily sweep (0-23)
     AUTOMATION_DAILY_MINUTE: int = 0             # minute offset for daily sweep
 
+    # Discord notifications (optional — leave blank to disable)
+    DISCORD_WEBHOOK_URL: str = ""   # Discord channel webhook URL
+    APP_BASE_URL: str = ""          # e.g. http://192.168.21.220:8765 — shown in notification
+
     # Gemini Free Tier limits (gemini-2.5-flash)
     FREE_TIER_RPD: int = 500        # requests per day
     FREE_TIER_RPM: int = 10         # requests per minute

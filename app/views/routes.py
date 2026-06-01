@@ -2173,6 +2173,33 @@ async def automation_sweep_now():
     return _sched.status()
 
 
+@router.post("/api/automation/test-discord")
+async def test_discord_notification(db: Session = Depends(get_db)):
+    """Send a test Discord notification with current DB stats.
+    Use this to verify webhook URL is correct before waiting for the daily sweep."""
+    if not settings.DISCORD_WEBHOOK_URL:
+        raise HTTPException(status_code=400, detail="DISCORD_WEBHOOK_URL not configured in .env")
+    from sqlalchemy import func, case as _case
+    row = db.query(
+        func.sum(_case((Asset.status == "done",  1), else_=0)).label("done"),
+        func.sum(_case((Asset.status == "error", 1), else_=0)).label("errors"),
+    ).first()
+    done   = int(row.done   or 0)
+    errors = int(row.errors or 0)
+    from app.services.discord import send_daily_summary
+    ok = await send_daily_summary(
+        settings.DISCORD_WEBHOOK_URL,
+        done=done,
+        errors=errors,
+        new_found=0,
+        source="test",
+        app_url=settings.APP_BASE_URL or "",
+    )
+    if not ok:
+        raise HTTPException(status_code=502, detail="Discord webhook call failed — check DISCORD_WEBHOOK_URL")
+    return {"ok": True, "sent": True, "done": done, "errors": errors}
+
+
 @router.post("/api/assets/{item_id}/push")
 async def push_one(item_id: str):
     result = await push_metadata_to_mimir(item_id)

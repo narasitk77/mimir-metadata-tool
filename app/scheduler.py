@@ -296,6 +296,9 @@ async def daily_sweep() -> None:
     This catches:
       - New files added during the day that missed the interval poll
       - Assets stuck as 'pending' from rate-limit interruptions or crashes
+
+    After processing completes, sends a Discord notification (if configured)
+    so a human can review and push.
     """
     if _paused:
         _log.info("Daily sweep skipped — automation paused")
@@ -306,36 +309,69 @@ async def daily_sweep() -> None:
               message="Daily sweep starting — polling all folders + full batch",
               user=SCHEDULER_USER)
 
-    await poll_all_folders()
+    # Snapshot done count before so we can report the delta at the end
+    db_snap = SessionLocal()
+    try:
+        done_before = db_snap.query(Asset).filter(Asset.status == "done").count()
+    finally:
+        db_snap.close()
 
+    # Poll all watch folders (fetches new items + auto-batches if anything pending)
+    await poll_all_folders()
+    new_found = _last_tick_summary.get("new", 0)
+
+    # Second pass: process any items still pending (e.g. if poll's batch was skipped
+    # because a manual batch was running at the time)
     db_check = SessionLocal()
     try:
         pending_count = db_check.query(Asset).filter(Asset.status == "pending").count()
     finally:
         db_check.close()
 
-    if pending_count == 0:
-        audit_log("daily_sweep_done", target="all",
-                  message="Daily sweep: no pending items — nothing to process",
-                  user=SCHEDULER_USER)
-        return
+    if pending_count > 0:
+        from app.views.routes import run_batch_internal, _running
+        if not _running.get("batch"):
+            try:
+                result = await run_batch_internal(user=SCHEDULER_USER, source="daily_sweep")
+                audit_log("daily_sweep_done", target="all", status="ok",
+                          message=f"Daily sweep second-pass: {pending_count} pending processed — {result}",
+                          details=result, user=SCHEDULER_USER)
+            except Exception as e:
+                audit_log("daily_sweep_done", target="all", status="error",
+                          message=f"Daily sweep second-pass error: {str(e)[:500]}",
+                          user=SCHEDULER_USER)
 
-    from app.views.routes import run_batch_internal, _running
-    if _running.get("batch"):
-        audit_log("daily_sweep_done", target="all", status="skipped",
-                  message=f"Daily sweep: {pending_count} pending but batch already running",
-                  user=SCHEDULER_USER)
-        return
-
+    # Final stats for the notification
+    db_final = SessionLocal()
     try:
-        result = await run_batch_internal(user=SCHEDULER_USER, source="daily_sweep")
-        audit_log("daily_sweep_done", target="all", status="ok",
-                  message=f"Daily sweep complete: {pending_count} pending processed — {result}",
-                  details=result, user=SCHEDULER_USER)
-    except Exception as e:
-        audit_log("daily_sweep_done", target="all", status="error",
-                  message=f"Daily sweep batch error: {str(e)[:500]}",
-                  user=SCHEDULER_USER)
+        done_after  = db_final.query(Asset).filter(Asset.status == "done").count()
+        error_total = db_final.query(Asset).filter(Asset.status == "error").count()
+    finally:
+        db_final.close()
+
+    newly_done = max(0, done_after - done_before)
+
+    audit_log("daily_sweep_done", target="all",
+              message=(f"Daily sweep complete — {newly_done} newly done, "
+                       f"{error_total} errors, {new_found} new files found"),
+              details={"newly_done": newly_done, "errors": error_total, "new_found": new_found},
+              user=SCHEDULER_USER)
+
+    # Discord notification — only when there's something for a human to review
+    from app.config import settings as _cfg
+    if _cfg.DISCORD_WEBHOOK_URL and (newly_done > 0 or new_found > 0):
+        try:
+            from app.services.discord import send_daily_summary
+            await send_daily_summary(
+                _cfg.DISCORD_WEBHOOK_URL,
+                done=newly_done,
+                errors=error_total,
+                new_found=new_found,
+                source="daily_sweep",
+                app_url=_cfg.APP_BASE_URL or "",
+            )
+        except Exception as exc:
+            _log.warning(f"Discord notification failed (non-fatal): {exc}")
 
 
 def start(interval_minutes: int = 15) -> None:
