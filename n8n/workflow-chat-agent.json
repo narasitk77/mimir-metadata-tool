@@ -14,7 +14,10 @@
       "name": "Chat",
       "type": "@n8n/n8n-nodes-langchain.chatTrigger",
       "typeVersion": 1.1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "webhookId": "mimi-chat-agent"
     },
     {
@@ -27,11 +30,14 @@
       "name": "มีมี่ Agent",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
-      "position": [260, 0]
+      "position": [
+        260,
+        0
+      ]
     },
     {
       "parameters": {
-        "modelName": "models/gemini-2.5-flash",
+        "modelName": "models/gemini-2.5-flash-lite",
         "options": {
           "temperature": 0.4
         }
@@ -40,7 +46,10 @@
       "name": "Gemini",
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1,
-      "position": [120, 220],
+      "position": [
+        120,
+        220
+      ],
       "credentials": {
         "googlePalmApi": {
           "id": "REPLACE_AFTER_IMPORT",
@@ -56,178 +65,215 @@
       "name": "ความจำบทสนทนา",
       "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
       "typeVersion": 1.3,
-      "position": [280, 220]
+      "position": [
+        280,
+        220
+      ]
     },
     {
       "parameters": {
         "name": "get_automation_status",
         "toolDescription": "ดูสถานะระบบอัตโนมัติ: scheduler ทำงานอยู่ไหม (mode internal/n8n), pause อยู่ไหม, sweep หรือ poll กำลังรันไหม, ผล sweep ล่าสุด (last_sweep: newly_done/errors/new_found), ค่าใช้จ่าย Gemini วันนี้ (today_cost_usd/today_cost_thb)",
         "method": "GET",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/automation/status",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        }
+        "url": "http://mimir-tool:8000/api/automation/status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-status",
       "name": "get_automation_status",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [460, 220]
+      "position": [
+        460,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     },
     {
       "parameters": {
         "name": "get_queue_stats",
         "toolDescription": "นับจำนวนรูปในคิวทั้งหมด: total, pending (รอวิเคราะห์), processing, done (เสร็จรอตรวจ), error และเช็คว่า batch/fetch กำลังรันอยู่ไหม",
         "method": "GET",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/stats",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        }
+        "url": "http://mimir-tool:8000/api/stats",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-stats",
       "name": "get_queue_stats",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [600, 220]
+      "position": [
+        600,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     },
     {
       "parameters": {
         "name": "get_costs_and_quota",
         "toolDescription": "ดูต้นทุนสะสมทั้งหมด: token input/output รวม, ค่าใช้จ่ายรวม USD/THB, จำนวนรูปที่วิเคราะห์แล้ว, การใช้ quota วันนี้ (today_requests จาก rpd_limit, today_tokens จาก tpd_limit)",
         "method": "GET",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/token-stats",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        }
+        "url": "http://mimir-tool:8000/api/token-stats",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-costs",
       "name": "get_costs_and_quota",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [740, 220]
+      "position": [
+        740,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     },
     {
       "parameters": {
         "name": "trigger_poll_now",
         "toolDescription": "สั่งดึงรูปใหม่จาก Mimir watch folders ทันที (ไม่ต้องรอรอบ 15 นาที) — async ตอบ 202 ทันที งานรันเบื้องหลัง; 409 = poll กำลังรันอยู่แล้ว",
         "method": "POST",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/automation/run-now?wait=false",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        }
+        "url": "http://mimir-tool:8000/api/automation/run-now?wait=false",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-poll",
       "name": "trigger_poll_now",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [880, 220]
+      "position": [
+        880,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     },
     {
       "parameters": {
         "name": "trigger_sweep_now",
         "toolDescription": "สั่ง daily sweep ทันที: ดึงรูปใหม่จากทุก folder + ประมวลผลทุกรูปที่ค้างใน pending ด้วย Gemini — async ตอบ 202 งานรันเบื้องหลังอาจใช้เวลาเป็นชั่วโมง; 409 = sweep กำลังรันอยู่แล้ว",
         "method": "POST",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/automation/sweep-now?wait=false",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        }
+        "url": "http://mimir-tool:8000/api/automation/sweep-now?wait=false",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-sweep",
       "name": "trigger_sweep_now",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [1020, 220]
+      "position": [
+        1020,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     },
     {
       "parameters": {
         "name": "pause_automation",
         "toolDescription": "หยุดระบบอัตโนมัติทั้งหมดชั่วคราว (kill switch) — poll และ sweep จะไม่ทำงานจนกว่าจะ resume ใช้เมื่อผู้ใช้สั่ง 'หยุด' 'พัก' 'pause'",
         "method": "POST",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/automation/pause",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        },
+        "url": "http://mimir-tool:8000/api/automation/pause",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"paused\": true}"
+        "jsonBody": "{\"paused\": true}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-pause",
       "name": "pause_automation",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [460, 380]
+      "position": [
+        460,
+        380
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     },
     {
       "parameters": {
         "name": "resume_automation",
         "toolDescription": "เปิดระบบอัตโนมัติกลับมาทำงานต่อหลังจาก pause ใช้เมื่อผู้ใช้สั่ง 'ทำต่อ' 'เปิดกลับ' 'resume'",
         "method": "POST",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/automation/pause",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        },
+        "url": "http://mimir-tool:8000/api/automation/pause",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"paused\": false}"
+        "jsonBody": "{\"paused\": false}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-resume",
       "name": "resume_automation",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [600, 380]
+      "position": [
+        600,
+        380
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     },
     {
       "parameters": {
         "name": "list_watch_folders",
         "toolDescription": "ดูรายชื่อ Mimir folders ที่ระบบเฝ้าดึงรูปอัตโนมัติอยู่ พร้อมสถานะ enabled, เวลา poll ล่าสุด, จำนวนรูปใหม่ล่าสุด, error ล่าสุด",
         "method": "GET",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/watch-folders",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        }
+        "url": "http://mimir-tool:8000/api/watch-folders",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-folders",
       "name": "list_watch_folders",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [740, 380]
+      "position": [
+        740,
+        380
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     },
     {
       "parameters": {
         "name": "add_watch_folder",
         "toolDescription": "เพิ่ม Mimir folder ใหม่ให้ระบบเฝ้าดึงรูปอัตโนมัติ — ใช้เมื่อผู้ใช้ส่ง URL หรือ UUID ของ folder มาพร้อมขอให้เฝ้า/เพิ่ม folder",
         "method": "POST",
-        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/watch-folders",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
-          ]
-        },
+        "url": "http://mimir-tool:8000/api/watch-folders",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "{\"folder_url\": \"{folder_url}\", \"label\": \"{label}\"}",
@@ -244,74 +290,157 @@
               "type": "string"
             }
           ]
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "tool-add-folder",
       "name": "add_watch_folder",
       "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
       "typeVersion": 1.1,
-      "position": [880, 380]
+      "position": [
+        880,
+        380
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "MimirKey00000001",
+          "name": "Mimir API Key"
+        }
+      }
     }
   ],
   "connections": {
     "Chat": {
       "main": [
-        [ { "node": "มีมี่ Agent", "type": "main", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Gemini": {
       "ai_languageModel": [
-        [ { "node": "มีมี่ Agent", "type": "ai_languageModel", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
       ]
     },
     "ความจำบทสนทนา": {
       "ai_memory": [
-        [ { "node": "มีมี่ Agent", "type": "ai_memory", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
       ]
     },
     "get_automation_status": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     },
     "get_queue_stats": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     },
     "get_costs_and_quota": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     },
     "trigger_poll_now": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     },
     "trigger_sweep_now": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     },
     "pause_automation": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     },
     "resume_automation": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     },
     "list_watch_folders": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     },
     "add_watch_folder": {
       "ai_tool": [
-        [ { "node": "มีมี่ Agent", "type": "ai_tool", "index": 0 } ]
+        [
+          {
+            "node": "มีมี่ Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
       ]
     }
   },
