@@ -42,6 +42,7 @@ docker compose up -d n8n
 |---|---|
 | `workflow-poll-15min.json` | ทุก 15 นาที → trigger poll (async) — เงียบๆ ไม่แจ้งเตือน |
 | `workflow-daily-sweep.json` | 09:00 น. → trigger sweep → วน loop เช็คสถานะทุก 5 นาทีจนเสร็จ → Discord |
+| `workflow-chat-agent.json` | **"มีมี่"** — AI agent คุยภาษาไทย สั่งงาน/ถามสถานะระบบผ่านแชท (ดูหัวข้อด้านล่าง) |
 
 จากนั้น **Activate** ทั้งสอง workflow (สวิตช์มุมขวาบน)
 
@@ -72,6 +73,33 @@ AUTOMATION_SCHEDULER_ENABLED=true
 DISCORD_WEBHOOK_URL=<webhook เดิม>
 # แล้ว restart แอป + Deactivate workflows ใน n8n
 ```
+
+## "มีมี่" — Chat Agent (สั่งงานด้วยภาษาคน)
+
+`workflow-chat-agent.json` คือ AI agent (Gemini เป็นสมอง) ที่คุยภาษาไทยได้เหมือนคนๆ นึง
+มี 9 tools เรียก API ของแอป — ตัวอย่างที่คุยได้:
+
+- "สถานะตอนนี้เป็นไง" / "เหลือกี่รูป" → รายงานคิว + ค่าใช้จ่ายวันนี้
+- "ไล่งานเลย" / "sweep เลย" → สั่ง sweep ทันที (async)
+- "ดึงรูปใหม่หน่อย" → trigger poll
+- "หยุดก่อน" / "ทำต่อ" → pause / resume ทั้งระบบ
+- "ใช้เงินไปเท่าไหร่แล้ว" → ต้นทุนสะสม + quota วันนี้
+- "เฝ้า folder นี้ให้หน่อย <URL>" → เพิ่ม watch folder
+- การ Push → มีมี่จะชี้ไปที่ dashboard (human-in-the-loop ยังบังคับ)
+
+### เปิดใช้
+1. Import `workflow-chat-agent.json`
+2. เปิด node **Gemini** → สร้าง credential "Google Gemini (PaLM) API" → วาง `GEMINI_API_KEY` เดิม
+3. Activate → กดปุ่ม **Chat** ใน editor เพื่อคุยทดสอบ หรือใช้ **public chat URL**
+   (Chat Trigger ตั้ง `public: true` แล้ว — n8n จะโชว์ URL หน้าแชทพร้อมแชร์ให้ทีม)
+
+### ช่องทางเพิ่มเติม (ต่อยอด)
+| ช่องทาง | วิธี |
+|---|---|
+| n8n Webchat | ได้ทันทีหลัง activate (ตามด้านบน) |
+| Claude (MCP) | เชื่อม n8n MCP แล้วสั่ง execute_workflow แบบ chat ได้จากแชท Claude เลย |
+| Discord bot | สร้าง Discord Application + bot token → เปลี่ยน trigger เป็น Discord Trigger |
+| LINE OA | LINE Messaging API webhook → ชี้เข้า Webhook trigger + ตอบกลับผ่าน Reply API |
 
 ## หมายเหตุ dev (รันแอปนอก Docker)
 
