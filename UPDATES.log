@@ -15,3 +15,4 @@
 2026-05-21 09:19:10 UTC  chore: add Stop-hook auto-ship safety net script
 2026-05-21 09:22:56 UTC  chore: auto-ship hook surfaces a systemMessage when it fires
 2026-06-01 16:26:18 UTC  auto-ship: caught 5 uncommitted file(s) at turn end — 2026-06-01 23:26
+2026-06-10 07:09:16 UTC  auto-ship: caught 1 uncommitted file(s) at turn end — 2026-06-10 14:09
