@@ -45,6 +45,11 @@ _interval_minutes: int = 15
 _last_heartbeat_at: Optional[datetime] = None
 _last_tick_summary: dict = {}
 _cost_warned_date: Optional[str] = None  # YYYY-MM-DD — audit warns once per day
+# External-trigger state (n8n mode): expose progress + result so the external
+# scheduler can poll status instead of holding an hours-long HTTP connection.
+_poll_running: bool = False
+_sweep_running: bool = False
+_last_sweep_summary: dict = {}
 
 SCHEDULER_USER = "__scheduler__"
 
@@ -72,7 +77,13 @@ def is_healthy() -> bool:
 
     Heartbeat tolerance = 2× interval + 1 min slack — gives APScheduler room
     to delay a tick under load without flapping the health signal.
+
+    External (n8n) mode: the internal scheduler is intentionally off, so the
+    absence of a running scheduler is healthy by definition.
     """
+    from app.config import settings as _cfg
+    if not _cfg.AUTOMATION_SCHEDULER_ENABLED:
+        return True
     if _scheduler is None or not _scheduler.running:
         return False
     if _paused:
@@ -90,7 +101,13 @@ def ensure_running(interval_minutes: Optional[int] = None) -> dict:
     Called on every `/api/automation/status` request so the moment a user
     opens the Automation modal or the navbar polls the dot, we recover.
     Returns {restarted: bool, healthy: bool}.
+
+    External (n8n) mode: never start/restart — the internal scheduler must
+    stay off or it would double-trigger alongside the external one.
     """
+    from app.config import settings as _cfg
+    if not _cfg.AUTOMATION_SCHEDULER_ENABLED:
+        return {"restarted": False, "healthy": True}
     iv = interval_minutes if interval_minutes is not None else _interval_minutes
     restarted = False
     if _scheduler is None:
@@ -127,16 +144,27 @@ def _today_cost_usd() -> float:
 
 
 def status() -> dict:
-    """Snapshot for the UI's automation panel + health dashboard."""
+    """Snapshot for the UI's automation panel + health dashboard.
+
+    Also consumed by the external scheduler (n8n): poll_running/sweep_running
+    tell it when an async-triggered job finishes, last_sweep carries the
+    numbers for the notification message.
+    """
+    from app.config import settings as _cfg
     today_cost = _today_cost_usd()
     return {
         "running":             _scheduler is not None and _scheduler.running,
+        "scheduler_enabled":   _cfg.AUTOMATION_SCHEDULER_ENABLED,
+        "mode":                "internal" if _cfg.AUTOMATION_SCHEDULER_ENABLED else "n8n",
         "paused":              _paused,
         "healthy":             is_healthy(),
         "interval_minutes":    _interval_minutes,
         "last_heartbeat_at":   _last_heartbeat_at.isoformat() if _last_heartbeat_at else None,
         "heartbeat_age_sec":   heartbeat_age_seconds(),
         "last_tick":           _last_tick_summary,
+        "poll_running":        _poll_running,
+        "sweep_running":       _sweep_running,
+        "last_sweep":          _last_sweep_summary,
         "today_cost_usd":      round(today_cost, 4),
         "today_cost_thb":      round(today_cost * 34, 2),
         "today_warn_usd":      DAILY_WARN_USD,

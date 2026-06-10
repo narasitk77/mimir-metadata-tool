@@ -6,6 +6,7 @@ every page except /auth/* and /healthz requires a Google login with an
 """
 from __future__ import annotations
 
+import hmac as _hmac
 import logging
 from contextlib import asynccontextmanager
 
@@ -55,10 +56,16 @@ async def lifespan(app: FastAPI):
     # Automation scheduler — polls Mimir watch folders every 15 min for new
     # items, auto-fetches them as pending, then auto-batches with Gemini.
     # No-op until the user adds a watch folder via the Automation UI.
-    try:
-        _scheduler.start(interval_minutes=settings.AUTOMATION_POLL_INTERVAL_MINUTES)
-    except Exception as e:
-        _log.warning(f"Automation scheduler failed to start: {e}")
+    # When AUTOMATION_SCHEDULER_ENABLED=false an external system (n8n) owns
+    # the schedule and triggers /api/automation/run-now + /sweep-now instead.
+    if settings.AUTOMATION_SCHEDULER_ENABLED:
+        try:
+            _scheduler.start(interval_minutes=settings.AUTOMATION_POLL_INTERVAL_MINUTES)
+        except Exception as e:
+            _log.warning(f"Automation scheduler failed to start: {e}")
+    else:
+        _log.info("Internal scheduler DISABLED — external (n8n) mode; "
+                  "triggers expected via /api/automation/* with X-API-Key")
     try:
         yield
     finally:
@@ -95,6 +102,14 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
         except Exception as _e:
             _log.debug(f"Could not set audit user from session: {_e}")
         if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+            return await call_next(request)
+        # Service API-key bypass (n8n / external schedulers) — /api/* only.
+        # Constant-time compare; disabled entirely when AUTOMATION_API_KEY is unset.
+        if (settings.AUTOMATION_API_KEY and path.startswith("/api/")
+                and _hmac.compare_digest(
+                    request.headers.get("X-API-Key", ""),
+                    settings.AUTOMATION_API_KEY)):
+            _audit.set_current_user("n8n")
             return await call_next(request)
         user = request.session.get("user")
         if user and user.get("email"):

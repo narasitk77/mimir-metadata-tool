@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     AUTOMATION_POLL_INTERVAL_MINUTES: int = 15   # how often to poll watch folders
     AUTOMATION_DAILY_HOUR: int = 2               # local UTC hour for daily sweep (0-23)
     AUTOMATION_DAILY_MINUTE: int = 0             # minute offset for daily sweep
+    # External scheduler mode (n8n) — when ENABLED=False the internal APScheduler
+    # never starts (and never self-heals back); an external system triggers
+    # /api/automation/run-now and /sweep-now instead, authenticated by API key.
+    AUTOMATION_SCHEDULER_ENABLED: bool = True
+    AUTOMATION_API_KEY: str = ""                 # empty = X-API-Key bypass disabled
 
     # Discord notifications (optional — leave blank to disable)
     DISCORD_WEBHOOK_URL: str = ""   # Discord channel webhook URL
