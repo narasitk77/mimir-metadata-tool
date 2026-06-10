@@ -58,6 +58,13 @@ services:
       GOOGLE_AUTH_CLIENT_SECRET: ${GOOGLE_AUTH_CLIENT_SECRET:-}
       GOOGLE_AUTH_REDIRECT_URI: ${GOOGLE_AUTH_REDIRECT_URI:-}
       SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-}
+      # External scheduler mode (n8n owns the schedule + Discord notification)
+      AUTOMATION_SCHEDULER_ENABLED: ${AUTOMATION_SCHEDULER_ENABLED:-true}
+      AUTOMATION_API_KEY: ${AUTOMATION_API_KEY:-}
+      # Leave DISCORD_WEBHOOK_URL unset here when n8n mode is on — n8n holds
+      # the webhook so notifications aren't sent twice.
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      APP_BASE_URL: ${APP_BASE_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,6 +75,26 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 3
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: mimir-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"               # LAN-only UI — not exposed through Caddy
+    environment:
+      GENERIC_TIMEZONE: Asia/Bangkok
+      TZ: Asia/Bangkok
+      N8N_SECURE_COOKIE: "false"  # allow login over plain http on the LAN
+      # Consumed by the imported workflows via $env.*
+      MIMIR_APP_URL: http://mimir-tool:8000
+      MIMIR_API_KEY: ${AUTOMATION_API_KEY:-}
+      MIMIR_DISCORD_WEBHOOK: ${DISCORD_WEBHOOK_URL_N8N:-}
+      MIMIR_PUBLIC_URL: ${APP_BASE_URL:-}
+    volumes:
+      - n8n_data:/home/node/.n8n  # n8n keeps its own SQLite here
+    # n8n reaches the app via the compose network: http://mimir-tool:8000
+    depends_on:
+      - mimir-tool
   caddy:
     image: caddy:2-alpine
     container_name: mimir-caddy
@@ -100,4 +127,6 @@ volumes:
   caddy_data:
     driver: local
   caddy_config:
+    driver: local
+  n8n_data:
     driver: local

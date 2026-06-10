@@ -9,7 +9,7 @@ from typing import List, Optional
 import httpx
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -2153,22 +2153,45 @@ async def automation_pause(body: AutomationPauseRequest):
 
 
 @router.post("/api/automation/run-now")
-async def automation_run_now():
-    """Trigger one poll cycle immediately (for testing without waiting 15 min)."""
+async def automation_run_now(wait: bool = True):
+    """Trigger one poll cycle immediately (for testing without waiting 15 min).
+
+    ?wait=false → fire-and-forget for external schedulers (n8n): returns 202
+    right away; poll GET /api/automation/status (poll_running) for completion.
+    """
     from app import scheduler as _sched
     if _sched.is_paused():
         raise HTTPException(status_code=409, detail="Automation is paused — resume first")
+    if not wait:
+        if _sched._poll_running:
+            raise HTTPException(status_code=409, detail="Poll already running")
+        audit_log("auto_poll_trigger", target="all",
+                  message="Poll triggered async (external scheduler)",
+                  user=get_current_user() or "n8n")
+        asyncio.create_task(_sched.poll_all_folders())
+        return JSONResponse({"started": True, "job": "poll"}, status_code=202)
     await _sched.poll_all_folders()
     return _sched.status()
 
 
 @router.post("/api/automation/sweep-now")
-async def automation_sweep_now():
+async def automation_sweep_now(wait: bool = True):
     """Trigger the daily sweep immediately — polls all folders + processes ALL pending items.
-    Useful for on-demand full runs or testing the daily sweep before the scheduled time."""
+
+    ?wait=false → fire-and-forget for external schedulers (n8n): returns 202
+    right away; poll GET /api/automation/status (sweep_running → false, then
+    read last_sweep for the result numbers)."""
     from app import scheduler as _sched
     if _sched.is_paused():
         raise HTTPException(status_code=409, detail="Automation is paused — resume first")
+    if not wait:
+        if _sched._sweep_running:
+            raise HTTPException(status_code=409, detail="Sweep already running")
+        audit_log("daily_sweep_trigger", target="all",
+                  message="Sweep triggered async (external scheduler)",
+                  user=get_current_user() or "n8n")
+        asyncio.create_task(_sched.daily_sweep())
+        return JSONResponse({"started": True, "job": "sweep"}, status_code=202)
     await _sched.daily_sweep()
     return _sched.status()
 

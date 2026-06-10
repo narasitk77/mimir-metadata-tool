@@ -1,0 +1,72 @@
+{
+  "name": "Mimir — Poll ทุก 15 นาที",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule-poll",
+      "name": "ทุก 15 นาที",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/automation/run-now",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "wait", "value": "false" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "trigger-poll",
+      "name": "Trigger Poll (async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "onError": "continueRegularOutput",
+      "notes": "409 = poll ก่อนหน้ายังรันอยู่ — ปกติ ไม่ใช่ error"
+    }
+  ],
+  "connections": {
+    "ทุก 15 นาที": {
+      "main": [
+        [
+          { "node": "Trigger Poll (async)", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Bangkok"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

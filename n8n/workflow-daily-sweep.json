@@ -1,0 +1,194 @@
+{
+  "name": "Mimir — Daily Sweep 09:00 + Discord",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-sweep",
+      "name": "ทุกวัน 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/automation/sweep-now",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "wait", "value": "false" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "trigger-sweep",
+      "name": "Trigger Sweep (async 202)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [200, 0],
+      "onError": "continueRegularOutput",
+      "notes": "409 = sweep ก่อนหน้ายังรันอยู่"
+    },
+    {
+      "parameters": {
+        "unit": "minutes",
+        "amount": 5
+      },
+      "id": "wait-5min",
+      "name": "รอ 5 นาที",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [400, 0],
+      "webhookId": "mimir-sweep-wait"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MIMIR_APP_URL || 'http://mimir-tool:8000' }}/api/automation/status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{ $env.MIMIR_API_KEY }}" }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "check-status",
+      "name": "เช็คสถานะ sweep",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.sweep_running }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-still-running",
+      "name": "ยังรันอยู่?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.last_sweep.newly_done || 0) + ($json.last_sweep.new_found || 0) }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-has-results",
+      "name": "มีงานให้รีวิว?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIMIR_DISCORD_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  embeds: [{\n    title: \"🎬  Mimir Metadata — ประมวลผลเสร็จแล้ว\",\n    description: \"กรุณาตรวจสอบ metadata แล้วกด **Push All** เมื่อพร้อม\" + ($env.MIMIR_PUBLIC_URL ? \"\\n\\n🔗 [เปิดแอป Mimir Metadata](\" + $env.MIMIR_PUBLIC_URL + \")\" : \"\"),\n    color: ($json.last_sweep.errors === 0 ? 3066993 : 15105570),\n    fields: [\n      { name: \"✅  Done\", value: \"**\" + $json.last_sweep.newly_done + \"** รายการ\", inline: true },\n      { name: \"❌  Error\", value: \"**\" + $json.last_sweep.errors + \"** รายการ\", inline: true },\n      { name: \"🆕  ไฟล์ใหม่วันนี้\", value: \"**\" + $json.last_sweep.new_found + \"** รายการ\", inline: true }\n    ],\n    footer: { text: \"Triggered by: n8n daily_sweep  ·  \" + new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) + \" น.\" }\n  }]\n}) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "discord-notify",
+      "name": "Discord แจ้งเตือน",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 100]
+    }
+  ],
+  "connections": {
+    "ทุกวัน 09:00": {
+      "main": [
+        [ { "node": "Trigger Sweep (async 202)", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Trigger Sweep (async 202)": {
+      "main": [
+        [ { "node": "รอ 5 นาที", "type": "main", "index": 0 } ]
+      ]
+    },
+    "รอ 5 นาที": {
+      "main": [
+        [ { "node": "เช็คสถานะ sweep", "type": "main", "index": 0 } ]
+      ]
+    },
+    "เช็คสถานะ sweep": {
+      "main": [
+        [ { "node": "ยังรันอยู่?", "type": "main", "index": 0 } ]
+      ]
+    },
+    "ยังรันอยู่?": {
+      "main": [
+        [ { "node": "รอ 5 นาที", "type": "main", "index": 0 } ],
+        [ { "node": "มีงานให้รีวิว?", "type": "main", "index": 0 } ]
+      ]
+    },
+    "มีงานให้รีวิว?": {
+      "main": [
+        [ { "node": "Discord แจ้งเตือน", "type": "main", "index": 0 } ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Bangkok"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

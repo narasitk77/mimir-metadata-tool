@@ -202,12 +202,29 @@ async def _poll_folder(folder_id: str) -> int:
 
 
 async def poll_all_folders() -> None:
-    """Scheduler tick: poll every enabled folder, then maybe trigger batch."""
-    global _last_heartbeat_at, _last_tick_summary
+    """Scheduler tick: poll every enabled folder, then maybe trigger batch.
+
+    Re-entrancy: APScheduler's max_instances=1 guards internal ticks, but
+    external (n8n) triggers can arrive anytime — _poll_running makes
+    concurrent invocations no-op instead of double-fetching.
+    """
+    global _last_heartbeat_at, _last_tick_summary, _poll_running
     if _paused:
         _log.info("Scheduler tick skipped — automation paused")
         _last_tick_summary = {"skipped": "paused", "at": datetime.utcnow().isoformat()}
         return
+    if _poll_running:
+        _log.info("Scheduler tick skipped — previous poll still running")
+        return
+    _poll_running = True
+    try:
+        await _poll_all_folders_inner()
+    finally:
+        _poll_running = False
+
+
+async def _poll_all_folders_inner() -> None:
+    global _last_heartbeat_at, _last_tick_summary
     _last_heartbeat_at = datetime.utcnow()
     set_current_user(SCHEDULER_USER)
 
@@ -328,10 +345,22 @@ async def daily_sweep() -> None:
     After processing completes, sends a Discord notification (if configured)
     so a human can review and push.
     """
+    global _sweep_running, _last_sweep_summary
     if _paused:
         _log.info("Daily sweep skipped — automation paused")
         return
+    if _sweep_running:
+        _log.info("Daily sweep skipped — previous sweep still running")
+        return
+    _sweep_running = True
+    try:
+        await _daily_sweep_inner()
+    finally:
+        _sweep_running = False
 
+
+async def _daily_sweep_inner() -> None:
+    global _last_sweep_summary
     set_current_user(SCHEDULER_USER)
     audit_log("daily_sweep_start", target="all",
               message="Daily sweep starting — polling all folders + full batch",
@@ -378,6 +407,13 @@ async def daily_sweep() -> None:
         db_final.close()
 
     newly_done = max(0, done_after - done_before)
+
+    _last_sweep_summary = {
+        "newly_done":  newly_done,
+        "errors":      error_total,
+        "new_found":   new_found,
+        "finished_at": datetime.utcnow().isoformat(),
+    }
 
     audit_log("daily_sweep_done", target="all",
               message=(f"Daily sweep complete — {newly_done} newly done, "
